@@ -112,11 +112,12 @@ $firewall = XZeroProtect::init([
 
     // --- Toggle individual detection modules ---
     'checks' => [
-        'rate_limit'   => true,
-        'blocked_path' => true,
-        'user_agent'   => true,
-        'payload'      => true,
-        'custom_rules' => true,
+        'crawler_check' => true,   // exempt verified crawlers from all checks
+        'rate_limit'    => true,
+        'blocked_path'  => true,
+        'user_agent'    => true,
+        'payload'       => true,
+        'custom_rules'  => true,
     ],
 
     // --- Log settings ---
@@ -237,6 +238,63 @@ $firewall = XZeroProtect::init([
     ],
 ]);
 ```
+
+---
+
+## Crawler Detection
+
+Trusted web crawlers (Googlebot, Bingbot, and others) are identified and exempted from all firewall checks — including rate limiting and auto-ban. This prevents legitimate bots from being accidentally blocked.
+
+For crawlers like Googlebot and Bingbot, identity is confirmed via **double-DNS verification** before granting trust:
+
+1. Resolve the visitor IP to a hostname via reverse DNS
+2. Confirm the hostname ends with the expected suffix (e.g. `.googlebot.com`)
+3. Re-resolve that hostname back to an IP
+4. Confirm the re-resolved IP matches the original visitor IP
+
+This is the verification method recommended by Google and Bing in their official documentation. Anyone can fake a User-Agent — DNS cannot be faked.
+
+Social crawlers (Twitterbot, LinkedInBot, Slackbot, etc.) are trusted by User-Agent only, as they do not publish verifiable IP ranges or rDNS suffixes.
+
+```php
+// Add a custom trusted crawler
+$firewall->crawlers->addCrawler(
+    name: 'MyCrawler',
+    uaContains: 'mycrawlerbot',
+    verifyRdns: false
+);
+
+// Remove a crawler from the trusted list
+$firewall->crawlers->removeCrawler('Googlebot');
+
+// Disable crawler detection entirely
+$firewall->disableCheck('crawler_check');
+```
+
+<details>
+<summary>View default trusted crawlers</summary>
+
+| Crawler | UA contains | DNS verified |
+|---------|-------------|:------------:|
+| Googlebot | `googlebot` | ✅ `.googlebot.com` |
+| Google Other | `google` | ✅ `.google.com` |
+| Bingbot | `bingbot` | ✅ `.search.msn.com` |
+| Yahoo Slurp | `yahoo! slurp` | ✅ `.crawl.yahoo.net` |
+| DuckDuckBot | `duckduckbot` | — |
+| Yandex | `yandexbot` | ✅ `.yandex.com` |
+| Baidu | `baiduspider` | ✅ `.baidu.com` |
+| Applebot | `applebot` | ✅ `.applebot.apple.com` |
+| Facebook | `facebookexternalhit` | ✅ `.facebook.com` |
+| Twitterbot | `twitterbot` | — |
+| LinkedInBot | `linkedinbot` | — |
+| WhatsApp | `whatsapp` | — |
+| Telegram | `telegrambot` | — |
+| Slackbot | `slackbot` | — |
+| Discordbot | `discordbot` | — |
+| Uptimerobot | `uptimerobot` | — |
+| Pingdom | `pingdom` | — |
+
+</details>
 
 ---
 
@@ -396,7 +454,7 @@ $firewall->disableCheck('user_agent');
 $firewall->enableCheck('user_agent');
 ```
 
-Available check keys: `rate_limit` · `blocked_path` · `user_agent` · `payload` · `custom_rules`
+Available check keys: `crawler_check` · `rate_limit` · `blocked_path` · `user_agent` · `payload` · `custom_rules`
 
 ---
 
@@ -427,13 +485,15 @@ xzeroprotect/
 │   ├── RateLimiter.php       Sliding-window rate limiter
 │   ├── RuleEngine.php        Custom rule registration & execution
 │   ├── ApacheBlocker.php     .htaccess read/write
+│   ├── CrawlerVerifier.php   Trusted crawler detection with double-DNS
 │   └── Logger.php            Attack logging with rotation
 ├── config/
 │   └── config.php            Default configuration
 ├── rules/
 │   ├── paths.php             Default blocked path patterns
 │   ├── agents.php            Default blocked User-Agent signatures
-│   └── payloads.php          Default attack payload patterns (PCRE)
+│   ├── payloads.php          Default attack payload patterns (PCRE)
+│   └── crawlers.php          Trusted crawler definitions (UA + rDNS config)
 └── tests/
     └── XZeroProtectTest.php  PHPUnit test suite
 ```
