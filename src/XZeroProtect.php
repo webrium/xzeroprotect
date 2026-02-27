@@ -17,6 +17,8 @@ class XZeroProtect
     public const MODE_LEARNING   = 'learning';   // log only, never block
     public const MODE_OFF        = 'off';
 
+    private static ?self $instance = null;
+
     // Public sub-components (accessible as $firewall->patterns, etc.)
     public PatternDetector $patterns;
     public IPManager       $ip;
@@ -77,6 +79,7 @@ class XZeroProtect
 
     /**
      * Create and return a new firewall instance.
+     * The instance is also stored internally and retrievable via getInstance().
      *
      * @param array $config Override default config values
      */
@@ -84,7 +87,24 @@ class XZeroProtect
     {
         $defaults = require dirname(__DIR__) . '/config/config.php';
         $merged   = self::mergeConfig($defaults, $config);
-        return new static($merged);
+        self::$instance = new static($merged);
+        return self::$instance;
+    }
+
+    /**
+     * Retrieve the firewall instance created by init().
+     * Use this to access logger, ip manager, etc. from anywhere in your app.
+     *
+     * @throws \RuntimeException if init() has not been called yet
+     */
+    public static function getInstance(): static
+    {
+        if (self::$instance === null) {
+            throw new \RuntimeException(
+                'xZeroProtect has not been initialized. Call XZeroProtect::init() first.'
+            );
+        }
+        return self::$instance;
     }
 
     // -------------------------------------------------------------------------
