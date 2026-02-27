@@ -62,6 +62,8 @@ XZeroProtect::init()->run();
 
 That's it. Default rules are active immediately.
 
+> **Note:** `init()` stores the instance internally. You can retrieve it from anywhere in your application using `XZeroProtect::getInstance()` — no need to pass `$firewall` around.
+
 ---
 
 ## Configuration
@@ -343,6 +345,32 @@ $logs = $firewall->logger->recent(limit: 100);
 
 // Clean up rotated backup log files older than retention period
 $firewall->logger->cleanup();
+```
+
+### Accessing the firewall from outside bootstrap
+
+Because `init()` stores the instance as a singleton, you can retrieve it from any controller, admin panel, or CLI script without passing `$firewall` as a variable:
+
+```php
+use Webrium\XZeroProtect\XZeroProtect;
+
+// In bootstrap / index.php
+XZeroProtect::init()->run();
+
+// ---
+
+// In any other file (e.g. admin panel, dashboard controller)
+$firewall = XZeroProtect::getInstance();
+
+$logs    = $firewall->logger->recent(limit: 100);
+$bans    = $firewall->ip->getAllBans();
+$isBanned = $firewall->ip->isBanned('1.2.3.4');
+```
+
+If `getInstance()` is called before `init()`, it throws a clear `RuntimeException`:
+
+```
+xZeroProtect has not been initialized. Call XZeroProtect::init() first.
 ```
 
 Log entries are plain-text, one per line:
