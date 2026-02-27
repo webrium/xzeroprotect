@@ -59,12 +59,23 @@ return [
     |--------------------------------------------------------------------------
     */
     'checks' => [
-        'rate_limit'   => true,
-        'blocked_path' => true,
-        'user_agent'   => true,
-        'payload'      => true,
-        'custom_rules' => true,
+        'crawler_check' => true,   // identify & exempt trusted crawlers (Googlebot, Bingbot, etc.)
+        'rate_limit'    => true,
+        'blocked_path'  => true,
+        'user_agent'    => true,
+        'payload'       => true,
+        'custom_rules'  => true,
     ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Crawler Verification
+    |--------------------------------------------------------------------------
+    | When verify_rdns is true in crawlers.php, a double-DNS check is performed
+    | to confirm the crawler is genuine (not a spoofed User-Agent).
+    | Disable this only if your server cannot perform outbound DNS lookups.
+    */
+    'crawler_verify_dns' => true,
 
     /*
     |--------------------------------------------------------------------------
