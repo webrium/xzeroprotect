@@ -26,6 +26,7 @@ class XZeroProtect
     public RuleEngine      $rules;
     public Logger          $logger;
     public ?ApacheBlocker  $apache = null;
+    public CrawlerVerifier $crawlers;
 
     private array   $config;
     private Storage $storage;
@@ -51,6 +52,7 @@ class XZeroProtect
         // Sub-components
         $rulesDir          = $config['rules_path'] ?? dirname(__DIR__) . '/rules';
         $this->patterns    = new PatternDetector($rulesDir);
+        $this->crawlers    = new CrawlerVerifier($rulesDir);
         $this->ip          = new IPManager($this->storage);
         $this->rateLimit   = new RateLimiter(
             $this->storage,
@@ -135,33 +137,40 @@ class XZeroProtect
             }
         }
 
-        // 1. Banned IP check (always runs regardless of mode)
+        // 1. Trusted crawler check — bypass all firewall checks
+        if ($this->checkEnabled('crawler_check')) {
+            if ($this->crawlers->isTrustedCrawler($request->ip, $request->userAgent)) {
+                return; // verified legitimate crawler — let it through
+            }
+        }
+
+        // 2. Banned IP check (always runs regardless of mode)
         if ($this->ip->isBanned($request->ip)) {
             $this->block($request, 'banned_ip', 'IP is banned');
         }
 
-        // 2. Rate limiting
+        // 3. Rate limiting
         if ($this->checkEnabled('rate_limit')) {
             if ($this->rateLimit->isExceeded($request->ip)) {
                 $this->handleViolation($request, 'rate_limit', 'Rate limit exceeded');
             }
         }
 
-        // 3. Suspicious path
+        // 4. Suspicious path
         if ($this->checkEnabled('blocked_path')) {
             if ($this->patterns->isSuspiciousPath($request->uri)) {
                 $this->handleViolation($request, 'blocked_path', 'Suspicious URI: ' . $request->uri);
             }
         }
 
-        // 4. User-Agent
+        // 5. User-Agent
         if ($this->checkEnabled('user_agent')) {
             if ($this->patterns->isSuspiciousAgent($request->userAgent)) {
                 $this->handleViolation($request, 'user_agent', 'Suspicious UA: ' . substr($request->userAgent, 0, 100));
             }
         }
 
-        // 5. Payload scanning
+        // 6. Payload scanning
         if ($this->checkEnabled('payload')) {
             $label = $this->patterns->detectPayload($request->rawInput());
             if ($label !== null) {
@@ -169,7 +178,7 @@ class XZeroProtect
             }
         }
 
-        // 6. Custom rules
+        // 7. Custom rules
         if ($this->checkEnabled('custom_rules')) {
             $result = $this->rules->evaluate($request);
             if ($result->isBlock()) {
@@ -186,7 +195,7 @@ class XZeroProtect
 
     /**
      * Enable or disable a specific check.
-     * Keys: rate_limit | blocked_path | user_agent | payload | custom_rules
+     * Keys: crawler_check | rate_limit | blocked_path | user_agent | payload | custom_rules
      */
     public function enableCheck(string $check): void
     {
