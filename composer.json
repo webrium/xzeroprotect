@@ -1,0 +1,30 @@
+{
+    "name": "webrium/xzeroprotect",
+    "description": "A lightweight, file-based PHP firewall library for protecting web applications from bots, scanners, and common attacks.",
+    "type": "library",
+    "keywords": ["firewall", "security", "php", "waf", "bot-protection"],
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Webrium",
+            "email": "dev@webrium.com"
+        }
+    ],
+    "require": {
+        "php": ">=8.0"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^10.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "Webrium\\XZeroProtect\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Webrium\\XZeroProtect\\Tests\\": "tests/"
+        }
+    },
+    "minimum-stability": "stable"
+}
