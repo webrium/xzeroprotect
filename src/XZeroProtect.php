@@ -36,7 +36,7 @@ class XZeroProtect
 
     // Visitor tracking
     private bool      $trackingEnabled  = false;
-    private ?callable $visitorCallback  = null;
+    private ?\Closure $visitorCallback  = null;
 
     // -------------------------------------------------------------------------
     // Factory / constructor
@@ -244,9 +244,9 @@ class XZeroProtect
      *       DB::table('visits')->insert($visit->toArray());
      *   });
      *
-     * @param callable(VisitInfo): void $callback
+     * @param \Closure(VisitInfo): void $callback
      */
-    public function enableTracking(callable $callback): void
+    public function enableTracking(\Closure $callback): void
     {
         $this->trackingEnabled = true;
         $this->visitorCallback = $callback;
