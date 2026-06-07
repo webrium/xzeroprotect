@@ -26,5 +26,8 @@
             "Webrium\\XZeroProtect\\Tests\\": "tests/"
         }
     },
+    "scripts": {
+        "test": "phpunit --testdox"
+    },
     "minimum-stability": "stable"
 }
