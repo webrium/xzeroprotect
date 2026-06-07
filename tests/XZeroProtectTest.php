@@ -12,6 +12,8 @@ use Webrium\XZeroProtect\RuleResult;
 use Webrium\XZeroProtect\Request;
 use Webrium\XZeroProtect\ApacheBlocker;
 use Webrium\XZeroProtect\Logger;
+use Webrium\XZeroProtect\DeviceInfo;
+use Webrium\XZeroProtect\VisitInfo;
 
 class XZeroProtectTest extends TestCase
 {
@@ -194,9 +196,18 @@ class XZeroProtectTest extends TestCase
         $this->assertTrue($d->isSuspiciousPath('/.env'));
     }
 
-    public function test_suspicious_path_php_extension(): void
+    public function test_suspicious_path_php_extension_not_blocked_by_default(): void
+    {
+        // .php is intentionally removed from default paths (see rules/paths.php)
+        // to avoid false positives on apps that serve raw PHP files.
+        $d = $this->makeDetector();
+        $this->assertFalse($d->isSuspiciousPath('/index.php'));
+    }
+
+    public function test_suspicious_path_php_extension_when_added_manually(): void
     {
         $d = $this->makeDetector();
+        $d->addPath('.php');
         $this->assertTrue($d->isSuspiciousPath('/index.php'));
     }
 
@@ -280,7 +291,8 @@ class XZeroProtectTest extends TestCase
     {
         $d = $this->makeDetector();
         $d->removePayload('sqli_union');
-        $this->assertNull($d->detectPayload('1 UNION SELECT * FROM users'));
+        // 'UNION SELECT' matches only sqli_union — no other pattern fires on this input
+        $this->assertNull($d->detectPayload('1 UNION SELECT id'));
     }
 
     // =========================================================================
@@ -480,6 +492,166 @@ class XZeroProtectTest extends TestCase
         $logger->log('test', $req, 'reason');
         $logs = $logger->recent(5);
         $this->assertEmpty($logs);
+    }
+
+    // =========================================================================
+    // DeviceInfo Tests
+    // =========================================================================
+
+    public function test_device_detects_chrome_on_windows(): void
+    {
+        $d = new DeviceInfo('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36');
+        $this->assertSame('Chrome', $d->browser);
+        $this->assertSame('124.0.0.0', $d->browserVersion);
+        $this->assertSame('Windows', $d->os);
+        $this->assertSame('10/11', $d->osVersion);
+        $this->assertSame('desktop', $d->type);
+        $this->assertTrue($d->isDesktop);
+        $this->assertFalse($d->isMobile);
+        $this->assertFalse($d->isTablet);
+    }
+
+    public function test_device_detects_safari_on_iphone(): void
+    {
+        $d = new DeviceInfo('Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1');
+        $this->assertSame('Safari', $d->browser);
+        $this->assertSame('iOS', $d->os);
+        $this->assertSame('17.0', $d->osVersion);
+        $this->assertSame('mobile', $d->type);
+        $this->assertTrue($d->isMobile);
+        $this->assertFalse($d->isDesktop);
+    }
+
+    public function test_device_detects_firefox_on_linux(): void
+    {
+        $d = new DeviceInfo('Mozilla/5.0 (X11; Linux x86_64; rv:124.0) Gecko/20100101 Firefox/124.0');
+        $this->assertSame('Firefox', $d->browser);
+        $this->assertSame('124.0', $d->browserVersion);
+        $this->assertSame('Linux', $d->os);
+        $this->assertSame('desktop', $d->type);
+    }
+
+    public function test_device_detects_edge(): void
+    {
+        $d = new DeviceInfo('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 Edg/124.0.0.0');
+        $this->assertSame('Edge', $d->browser);
+    }
+
+    public function test_device_detects_android_tablet(): void
+    {
+        $d = new DeviceInfo('Mozilla/5.0 (Linux; Android 13; SM-T870) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Safari/537.36');
+        $this->assertSame('Android', $d->os);
+        $this->assertSame('tablet', $d->type);
+        $this->assertTrue($d->isTablet);
+    }
+
+    public function test_device_unknown_agent(): void
+    {
+        $d = new DeviceInfo('SomeObscureClient/1.0');
+        $this->assertSame('Unknown', $d->browser);
+        $this->assertSame('Unknown', $d->os);
+        $this->assertSame('desktop', $d->type); // fallback
+    }
+
+    // =========================================================================
+    // VisitInfo & Visitor Tracking Tests
+    // =========================================================================
+
+    private function makeRequest(string $ip, string $ua, string $uri = '/'): Request
+    {
+        $_SERVER['REMOTE_ADDR']     = $ip;
+        $_SERVER['REQUEST_URI']     = $uri;
+        $_SERVER['REQUEST_METHOD']  = 'GET';
+        $_SERVER['HTTP_USER_AGENT'] = $ua;
+        $_SERVER['HTTP_REFERER']    = '';
+        return new Request();
+    }
+
+    public function test_visit_info_properties_populated(): void
+    {
+        $req   = $this->makeRequest('1.2.3.4', 'Mozilla/5.0 (Windows NT 10.0) Chrome/124.0', '/about');
+        $visit = new VisitInfo($req);
+
+        $this->assertSame('1.2.3.4', $visit->ip);
+        $this->assertSame('/about', $visit->uri);
+        $this->assertSame('/about', $visit->path);
+        $this->assertSame('GET', $visit->method);
+        $this->assertInstanceOf(DeviceInfo::class, $visit->device);
+        $this->assertNotEmpty($visit->fingerprint);
+        $this->assertIsInt($visit->timestamp);
+    }
+
+    public function test_visit_info_to_array_has_all_keys(): void
+    {
+        $req   = $this->makeRequest('1.2.3.4', 'Mozilla/5.0 Chrome/124.0');
+        $visit = new VisitInfo($req);
+        $arr   = $visit->toArray();
+
+        foreach (['ip', 'uri', 'path', 'method', 'user_agent', 'referer',
+                  'timestamp', 'fingerprint', 'browser', 'browser_ver',
+                  'os', 'os_ver', 'device_type', 'is_mobile', 'is_tablet', 'is_desktop'] as $key) {
+            $this->assertArrayHasKey($key, $arr, "Missing key: $key");
+        }
+    }
+
+    public function test_visit_info_date_format(): void
+    {
+        $req   = $this->makeRequest('1.2.3.4', 'Mozilla/5.0');
+        $visit = new VisitInfo($req);
+
+        $this->assertMatchesRegularExpression(
+            '/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/',
+            $visit->date()
+        );
+    }
+
+    // --- Unique visitor / fingerprint ---
+
+    public function test_same_visitor_same_day_gets_same_fingerprint(): void
+    {
+        $ua  = 'Mozilla/5.0 (Windows NT 10.0) Chrome/124.0';
+        $req = $this->makeRequest('10.0.0.1', $ua);
+
+        $visit1 = new VisitInfo($req);
+        $visit2 = new VisitInfo($req);
+
+        $this->assertSame($visit1->fingerprint, $visit2->fingerprint);
+    }
+
+    public function test_different_ip_gets_different_fingerprint(): void
+    {
+        $ua = 'Mozilla/5.0 (Windows NT 10.0) Chrome/124.0';
+
+        $visit1 = new VisitInfo($this->makeRequest('10.0.0.1', $ua));
+        $visit2 = new VisitInfo($this->makeRequest('10.0.0.2', $ua));
+
+        $this->assertNotSame($visit1->fingerprint, $visit2->fingerprint);
+    }
+
+    public function test_different_user_agent_gets_different_fingerprint(): void
+    {
+        $visit1 = new VisitInfo($this->makeRequest('10.0.0.1', 'Mozilla/5.0 Chrome/124.0'));
+        $visit2 = new VisitInfo($this->makeRequest('10.0.0.1', 'Mozilla/5.0 Firefox/124.0'));
+
+        $this->assertNotSame($visit1->fingerprint, $visit2->fingerprint);
+    }
+
+    public function test_fingerprint_is_sha256_hex_string(): void
+    {
+        $req   = $this->makeRequest('1.2.3.4', 'Mozilla/5.0');
+        $visit = new VisitInfo($req);
+
+        // SHA-256 → 64 hex characters
+        $this->assertMatchesRegularExpression('/^[a-f0-9]{64}$/', $visit->fingerprint);
+    }
+
+    public function test_fingerprint_does_not_contain_raw_ip(): void
+    {
+        $req   = $this->makeRequest('192.168.1.100', 'Mozilla/5.0');
+        $visit = new VisitInfo($req);
+
+        // Fingerprint must be a hash — the raw IP must not appear in it
+        $this->assertStringNotContainsString('192.168.1.100', $visit->fingerprint);
     }
 
     // =========================================================================
