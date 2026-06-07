@@ -34,6 +34,10 @@ class XZeroProtect
     private array   $checks;
     private array   $autoBan;
 
+    // Visitor tracking
+    private bool      $trackingEnabled  = false;
+    private ?callable $visitorCallback  = null;
+
     // -------------------------------------------------------------------------
     // Factory / constructor
     // -------------------------------------------------------------------------
@@ -187,6 +191,9 @@ class XZeroProtect
                 $this->logger->log('custom_rule_log', $request, $result->reason);
             }
         }
+
+        // All checks passed — this is a real visit
+        $this->recordVisit($request);
     }
 
     // -------------------------------------------------------------------------
@@ -220,6 +227,39 @@ class XZeroProtect
     public function getStorage(): Storage
     {
         return $this->storage;
+    }
+
+    // -------------------------------------------------------------------------
+    // Visitor tracking
+    // -------------------------------------------------------------------------
+
+    /**
+     * Enable real-visitor tracking.
+     *
+     * The callback receives a VisitInfo object for every request that passes
+     * all firewall checks. Use it to persist visits however you like.
+     *
+     * Example:
+     *   $firewall->enableTracking(function(VisitInfo $visit) {
+     *       DB::table('visits')->insert($visit->toArray());
+     *   });
+     *
+     * @param callable(VisitInfo): void $callback
+     */
+    public function enableTracking(callable $callback): void
+    {
+        $this->trackingEnabled = true;
+        $this->visitorCallback = $callback;
+    }
+
+    public function disableTracking(): void
+    {
+        $this->trackingEnabled = false;
+    }
+
+    public function isTrackingEnabled(): bool
+    {
+        return $this->trackingEnabled;
     }
 
     // -------------------------------------------------------------------------
@@ -279,6 +319,23 @@ class XZeroProtect
         header('Content-Type: text/plain; charset=UTF-8');
         echo $message;
         exit;
+    }
+
+    /**
+     * Fire the visitor-tracking callback (if enabled) for a verified real visit.
+     * Errors inside the callback are caught so they never break the main request.
+     */
+    private function recordVisit(Request $request): void
+    {
+        if (!$this->trackingEnabled || $this->visitorCallback === null) {
+            return;
+        }
+
+        try {
+            ($this->visitorCallback)(new VisitInfo($request));
+        } catch (\Throwable) {
+            // Tracking must never crash the application
+        }
     }
 
     private function defaultStoragePath(): string
