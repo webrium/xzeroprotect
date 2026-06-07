@@ -37,7 +37,7 @@ return [
     */
     'auto_ban' => [
         'enabled'              => true,
-        'violations_threshold' => 5,       // violations before ban
+        'violations_threshold' => 10,      // violations before ban
         'ban_duration'         => 86400,   // seconds (24h), 0 = permanent
         'permanent_after_bans' => 3,       // X temp bans → permanent
     ],

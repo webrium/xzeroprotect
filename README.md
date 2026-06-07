@@ -89,7 +89,7 @@ $firewall = XZeroProtect::init([
     // --- Automatic banning ---
     'auto_ban' => [
         'enabled'              => true,
-        'violations_threshold' => 5,      // violations before a ban is issued
+        'violations_threshold' => 10,     // violations before a ban is issued
         'ban_duration'         => 86400,  // ban length in seconds (24 h)
         'permanent_after_bans' => 3,      // escalate to permanent after N bans
     ],
@@ -163,9 +163,11 @@ $firewall->patterns->removePath('xmlrpc');
 | Dangerous files | `.sql`, `.bak`, `.backup`, `.old`, `dump.sql` |
 | Path traversal | `../`, `..%2f`, `%2e%2e` |
 | Web shells | `shell.php`, `c99.php`, `r57.php`, `webshell` |
-| Script extensions | `.asp`, `.aspx`, `.jsp`, `.cfm`, `.cgi`, `.php` |
+| Script extensions | `.asp`, `.aspx`, `.jsp`, `.cfm`, `.cgi` |
 | Info disclosure | `phpinfo`, `server-status`, `server-info` |
 | Install artifacts | `setup.php`, `install.php`, `readme.html` |
+
+> **Note:** `.php` is **not** blocked by default to avoid false positives on applications that serve raw PHP files. Add it explicitly if your app uses modern routing: `$firewall->patterns->addPath('.php')`
 
 </details>
 
@@ -183,7 +185,15 @@ $firewall->patterns->removeAgent('curl'); // allow curl if your API clients use 
 <details>
 <summary>View default blocked agents</summary>
 
-`sqlmap` · `nikto` · `nessus` · `acunetix` · `netsparker` · `masscan` · `nmap` · `zgrab` · `dirbuster` · `gobuster` · `feroxbuster` · `wfuzz` · `ffuf` · `hydra` · `metasploit` · `python-requests` · `go-http-client` · `libwww-perl` · `wget` · and more
+`sqlmap` · `nikto` · `nessus` · `acunetix` · `netsparker` · `masscan` · `nmap` · `zgrab` · `dirbuster` · `gobuster` · `feroxbuster` · `wfuzz` · `ffuf` · `hydra` · `metasploit` · `semrushbot` · `ahrefsbot` · `libwww-perl` · and more
+
+> **Note:** `curl`, `wget`, `python-requests`, and `go-http-client` are **not** blocked by default because they are also used by legitimate API clients. Add them explicitly if needed:
+> ```php
+> $firewall->patterns->addAgent('curl/');
+> $firewall->patterns->addAgent('wget/');
+> $firewall->patterns->addAgent('python-requests');
+> $firewall->patterns->addAgent('go-http-client');
+> ```
 
 </details>
 
@@ -472,6 +482,108 @@ XZeroProtect::init(['mode' => 'production'])->run();
 
 ---
 
+## Visitor Tracking
+
+After all firewall checks pass, xZeroProtect can record verified real visits — bots, scanners, and suspicious requests are already filtered out before this runs.
+
+Tracking is **opt-in** and **disabled by default**. Enable it by passing a closure to `enableTracking()` before calling `run()`. The closure receives a `VisitInfo` object; how you store the data is entirely up to you.
+
+```php
+use Webrium\XZeroProtect\XZeroProtect;
+use Webrium\XZeroProtect\VisitInfo;
+
+$firewall = XZeroProtect::init();
+
+$firewall->enableTracking(function (VisitInfo $visit) {
+    // Store in your database however you like
+    $pdo->prepare("
+        INSERT INTO visits
+            (ip, path, method, referer, user_agent,
+             browser, browser_version, os, os_version,
+             device_type, fingerprint, visited_at)
+        VALUES
+            (:ip, :path, :method, :referer, :user_agent,
+             :browser, :browser_ver, :os, :os_ver,
+             :device_type, :fingerprint, :visited_at)
+    ")->execute([
+        ':ip'          => $visit->ip,
+        ':path'        => $visit->path,
+        ':method'      => $visit->method,
+        ':referer'     => $visit->referer,
+        ':user_agent'  => $visit->userAgent,
+        ':browser'     => $visit->device->browser,
+        ':browser_ver' => $visit->device->browserVersion,
+        ':os'          => $visit->device->os,
+        ':os_ver'      => $visit->device->osVersion,
+        ':device_type' => $visit->device->type,
+        ':fingerprint' => $visit->fingerprint,
+        ':visited_at'  => $visit->date(),
+    ]);
+});
+
+$firewall->run();
+```
+
+### VisitInfo properties
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `$visit->ip` | `string` | Visitor IP address |
+| `$visit->uri` | `string` | Full URI including query string |
+| `$visit->path` | `string` | URI path without query string |
+| `$visit->method` | `string` | HTTP method (`GET`, `POST`, ...) |
+| `$visit->userAgent` | `string` | Raw User-Agent header |
+| `$visit->referer` | `string` | HTTP Referer header |
+| `$visit->timestamp` | `int` | Unix timestamp |
+| `$visit->fingerprint` | `string` | SHA-256 unique visitor identifier (see below) |
+| `$visit->device` | `DeviceInfo` | Parsed browser, OS, and device type |
+| `$visit->date()` | `string` | Formatted timestamp — default `Y-m-d H:i:s` |
+| `$visit->toArray()` | `array` | All fields as a flat array, ready for DB insert |
+
+### DeviceInfo properties
+
+Accessible via `$visit->device`:
+
+| Property | Type | Example |
+|----------|------|---------|
+| `->browser` | `string` | `Chrome`, `Firefox`, `Safari`, `Edge`, `Opera` |
+| `->browserVersion` | `string` | `124.0.0.0` |
+| `->os` | `string` | `Windows`, `macOS`, `Android`, `iOS`, `Linux` |
+| `->osVersion` | `string` | `10/11`, `17.0`, `13` |
+| `->type` | `string` | `desktop`, `mobile`, `tablet` |
+| `->isDesktop` | `bool` | `true` / `false` |
+| `->isMobile` | `bool` | `true` / `false` |
+| `->isTablet` | `bool` | `true` / `false` |
+
+### Unique visitor fingerprinting
+
+`$visit->fingerprint` is a **SHA-256 hash** of the visitor's IP, User-Agent, and the current date. This means:
+
+- The same visitor on the same day always gets the **same fingerprint** — useful for deduplicating page hits into unique daily visits.
+- The fingerprint **resets the next day** — no long-term tracking.
+- The raw IP is **never stored in the fingerprint** — it cannot be reversed.
+
+```php
+// Count only unique visitors per day
+$firewall->enableTracking(function (VisitInfo $visit) use ($pdo) {
+    $exists = $pdo->prepare("SELECT 1 FROM visits WHERE fingerprint = ? AND DATE(visited_at) = CURDATE()")
+                  ->execute([$visit->fingerprint]);
+    if (!$exists->fetchColumn()) {
+        // First visit of the day for this visitor
+        $pdo->prepare("INSERT INTO visits ...")->execute($visit->toArray());
+    }
+});
+```
+
+### Manage tracking at runtime
+
+```php
+$firewall->disableTracking();
+$firewall->isTrackingEnabled(); // bool
+```
+
+---
+
 ## Architecture
 
 ```
@@ -486,7 +598,9 @@ xzeroprotect/
 │   ├── RuleEngine.php        Custom rule registration & execution
 │   ├── ApacheBlocker.php     .htaccess read/write
 │   ├── CrawlerVerifier.php   Trusted crawler detection with double-DNS
-│   └── Logger.php            Attack logging with rotation
+│   ├── Logger.php            Attack logging with rotation
+│   ├── VisitInfo.php         Verified visit data object (tracking)
+│   └── DeviceInfo.php        Browser, OS, and device type parser
 ├── config/
 │   └── config.php            Default configuration
 ├── rules/
@@ -496,6 +610,18 @@ xzeroprotect/
 │   └── crawlers.php          Trusted crawler definitions (UA + rDNS config)
 └── tests/
     └── XZeroProtectTest.php  PHPUnit test suite
+```
+
+---
+
+## Running Tests
+
+```bash
+composer install
+composer test
+
+# With detailed output
+./vendor/bin/phpunit --testdox
 ```
 
 ---
