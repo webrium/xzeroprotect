@@ -58,7 +58,11 @@ return [
     '.jsp',
     '.cfm',
     '.cgi',
-    '.php',          // Remove this if your app serves raw .php files!
+
+    // '.php' is intentionally NOT blocked by default.
+    // If your app uses modern routing (Laravel, Symfony, Slim, etc.)
+    // and no public .php files exist, you can add it explicitly:
+    //   $firewall->patterns->addPath('.php');
 
     // Info / diagnostic exposure
     'phpinfo',
