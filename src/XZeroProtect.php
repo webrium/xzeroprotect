@@ -127,7 +127,7 @@ class XZeroProtect
             return;
         }
 
-        $request = new Request();
+        $request = new Request($this->config['trusted_proxies'] ?? []);
 
         // Always pass whitelisted IPs
         if ($this->ip->isWhitelisted($request->ip)) {

@@ -98,6 +98,15 @@ $firewall = XZeroProtect::init([
     'apache_blocking' => false,
     'htaccess_path'   => __DIR__ . '/.htaccess',
 
+    // --- Reverse proxies / CDNs (e.g. Cloudflare, Nginx, load balancers) ---
+    // Leave empty to always use REMOTE_ADDR (safest if the server is
+    // reachable directly). Add proxy IPs/CIDRs to read the real client IP
+    // from CF-Connecting-IP / True-Client-IP / X-Real-IP / X-Forwarded-For
+    // when the request comes from one of these proxies. Use ['*'] to trust
+    // these headers regardless of REMOTE_ADDR (only if the server is NOT
+    // directly reachable).
+    'trusted_proxies' => [],
+
     // --- Always-allow list ---
     'whitelist' => [
         'ips'   => ['127.0.0.1', '10.0.0.0/8'],

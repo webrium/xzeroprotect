@@ -30,6 +30,11 @@ class XZeroProtectTest extends TestCase
     protected function tearDown(): void
     {
         $this->removeDir($this->tmpDir);
+
+        // Clean up any proxy headers set by IP-resolution tests
+        foreach (['HTTP_CF_CONNECTING_IP', 'HTTP_TRUE_CLIENT_IP', 'HTTP_X_REAL_IP', 'HTTP_X_FORWARDED_FOR'] as $header) {
+            unset($_SERVER[$header]);
+        }
     }
 
     // =========================================================================
@@ -652,6 +657,103 @@ class XZeroProtectTest extends TestCase
 
         // Fingerprint must be a hash — the raw IP must not appear in it
         $this->assertStringNotContainsString('192.168.1.100', $visit->fingerprint);
+    }
+
+    // =========================================================================
+    // Request — IP resolution Tests
+    // =========================================================================
+
+    public function test_default_ip_resolution_uses_remote_addr(): void
+    {
+        $_SERVER['REMOTE_ADDR']      = '203.0.113.10';
+        $_SERVER['HTTP_CF_CONNECTING_IP'] = '198.51.100.5'; // should be ignored
+        $_SERVER['REQUEST_URI']      = '/';
+        $_SERVER['REQUEST_METHOD']   = 'GET';
+        $_SERVER['HTTP_USER_AGENT']  = 'Test';
+
+        $req = new Request(); // no trusted proxies configured
+
+        $this->assertSame('203.0.113.10', $req->ip);
+    }
+
+    public function test_trusted_proxy_uses_cf_connecting_ip(): void
+    {
+        $_SERVER['REMOTE_ADDR']           = '173.245.48.1'; // Cloudflare edge IP
+        $_SERVER['HTTP_CF_CONNECTING_IP'] = '198.51.100.5'; // real visitor
+        $_SERVER['REQUEST_URI']           = '/';
+        $_SERVER['REQUEST_METHOD']        = 'GET';
+        $_SERVER['HTTP_USER_AGENT']       = 'Test';
+
+        $req = new Request(['173.245.48.0/20']);
+
+        $this->assertSame('198.51.100.5', $req->ip);
+    }
+
+    public function test_untrusted_remote_addr_ignores_proxy_headers(): void
+    {
+        $_SERVER['REMOTE_ADDR']           = '203.0.113.10'; // not in trusted list
+        $_SERVER['HTTP_CF_CONNECTING_IP'] = '198.51.100.5'; // attacker-supplied, must be ignored
+        $_SERVER['REQUEST_URI']           = '/';
+        $_SERVER['REQUEST_METHOD']        = 'GET';
+        $_SERVER['HTTP_USER_AGENT']       = 'Test';
+
+        $req = new Request(['173.245.48.0/20']);
+
+        $this->assertSame('203.0.113.10', $req->ip);
+    }
+
+    public function test_x_forwarded_for_takes_left_most_valid_ip(): void
+    {
+        $_SERVER['REMOTE_ADDR']         = '10.0.0.1';
+        $_SERVER['HTTP_X_FORWARDED_FOR'] = '198.51.100.7, 10.0.0.1';
+        $_SERVER['REQUEST_URI']          = '/';
+        $_SERVER['REQUEST_METHOD']       = 'GET';
+        $_SERVER['HTTP_USER_AGENT']      = 'Test';
+
+        $req = new Request(['10.0.0.0/8']);
+
+        $this->assertSame('198.51.100.7', $req->ip);
+    }
+
+    public function test_wildcard_trusted_proxy_trusts_any_remote_addr(): void
+    {
+        $_SERVER['REMOTE_ADDR']           = '203.0.113.99';
+        $_SERVER['HTTP_CF_CONNECTING_IP'] = '198.51.100.5';
+        $_SERVER['REQUEST_URI']           = '/';
+        $_SERVER['REQUEST_METHOD']        = 'GET';
+        $_SERVER['HTTP_USER_AGENT']       = 'Test';
+
+        $req = new Request(['*']);
+
+        $this->assertSame('198.51.100.5', $req->ip);
+    }
+
+    public function test_falls_back_to_remote_addr_when_proxy_header_invalid(): void
+    {
+        $_SERVER['REMOTE_ADDR']           = '173.245.48.1';
+        $_SERVER['HTTP_CF_CONNECTING_IP'] = 'not-an-ip';
+        $_SERVER['REQUEST_URI']           = '/';
+        $_SERVER['REQUEST_METHOD']        = 'GET';
+        $_SERVER['HTTP_USER_AGENT']       = 'Test';
+
+        $req = new Request(['173.245.48.0/20']);
+
+        $this->assertSame('173.245.48.1', $req->ip);
+    }
+
+    public function test_trusted_proxy_ipv6_exact_match_different_notation(): void
+    {
+        // REMOTE_ADDR (expanded form) and trusted entry (compact form) are the
+        // same address written differently — must still be trusted.
+        $_SERVER['REMOTE_ADDR']           = '2001:0db8:0000:0000:0000:0000:0000:0001';
+        $_SERVER['HTTP_CF_CONNECTING_IP'] = '198.51.100.5';
+        $_SERVER['REQUEST_URI']           = '/';
+        $_SERVER['REQUEST_METHOD']        = 'GET';
+        $_SERVER['HTTP_USER_AGENT']       = 'Test';
+
+        $req = new Request(['2001:db8::1']);
+
+        $this->assertSame('198.51.100.5', $req->ip);
     }
 
     // =========================================================================
