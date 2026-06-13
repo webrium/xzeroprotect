@@ -79,6 +79,25 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Trusted Proxies
+    |--------------------------------------------------------------------------
+    | IPs/CIDRs of reverse proxies, load balancers, or CDNs (e.g. Cloudflare)
+    | that sit in front of this server. When the immediate REMOTE_ADDR matches
+    | one of these, the real client IP is read from CF-Connecting-IP,
+    | True-Client-IP, X-Real-IP, or X-Forwarded-For (in that order).
+    |
+    | Leave empty (default) to always use REMOTE_ADDR — the safest option when
+    | the server is directly reachable, since these headers can otherwise be
+    | spoofed by the client.
+    |
+    | Use ['*'] to trust these headers regardless of REMOTE_ADDR — only do
+    | this if the server is NOT directly reachable (e.g. firewalled to only
+    | accept traffic from Cloudflare).
+    */
+    'trusted_proxies' => [],
+
+    /*
+    |--------------------------------------------------------------------------
     | Whitelists
     |--------------------------------------------------------------------------
     */

@@ -117,7 +117,7 @@ class CrawlerVerifier
     /**
      * Double-DNS verification:
      *  ip → hostname (must end with $suffix)
-     *  hostname → ip (must match original ip)
+     *  hostname → ip (must match original ip, IPv4 or IPv6)
      */
     private function verifyViaDns(string $ip, string $suffix): bool
     {
@@ -132,14 +132,58 @@ class CrawlerVerifier
             return false;
         }
 
-        // Step 3: forward lookup (confirm hostname resolves back to same IP)
-        $resolved = gethostbyname($hostname);
-        if ($resolved === $hostname) {
-            return false; // gethostbyname returns the input unchanged on failure
+        // Step 3 & 4: forward lookup — confirm hostname resolves back to the
+        // original IP. We must check both A (IPv4) and AAAA (IPv6) records,
+        // because crawlers increasingly connect over IPv6 and gethostbyname()
+        // only returns IPv4 addresses. Both sides are normalized so differing
+        // IPv6 text representations still compare equal.
+        return in_array($this->normalizeIp($ip), $this->forwardLookup($hostname), true);
+    }
+
+    /**
+     * Resolve a hostname to all of its A and AAAA records.
+     *
+     * @return array<int,string> List of resolved IPs (IPv4 + IPv6), normalized.
+     */
+    private function forwardLookup(string $hostname): array
+    {
+        $ips = [];
+
+        // dns_get_record gives us both IPv4 (A) and IPv6 (AAAA) records.
+        // Suppress errors: it can emit warnings on lookup failure.
+        $records = @dns_get_record($hostname, DNS_A | DNS_AAAA);
+
+        if (is_array($records)) {
+            foreach ($records as $record) {
+                if (isset($record['ip'])) {            // A record
+                    $ips[] = $this->normalizeIp($record['ip']);
+                } elseif (isset($record['ipv6'])) {    // AAAA record
+                    $ips[] = $this->normalizeIp($record['ipv6']);
+                }
+            }
         }
 
-        // Step 4: IP match
-        return $resolved === $ip;
+        // Fallback to gethostbyname() (IPv4 only) if dns_get_record is
+        // unavailable or returned nothing.
+        if (empty($ips)) {
+            $resolved = gethostbyname($hostname);
+            if ($resolved !== $hostname) {
+                $ips[] = $this->normalizeIp($resolved);
+            }
+        }
+
+        return $ips;
+    }
+
+    /**
+     * Normalize an IP to its canonical binary form for reliable comparison
+     * (handles differing IPv6 text representations, e.g. 2001:db8::1 vs
+     * 2001:0db8:0000::1). Falls back to the original string if invalid.
+     */
+    private function normalizeIp(string $ip): string
+    {
+        $packed = @inet_pton($ip);
+        return $packed === false ? $ip : (inet_ntop($packed) ?: $ip);
     }
 
     private function reverseLookup(string $ip): ?string

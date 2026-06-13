@@ -105,7 +105,7 @@ class Request
             }
 
             if (strpos($entry, '/') === false) {
-                if ($ip === $entry) {
+                if ($this->ipEquals($ip, $entry)) {
                     return true;
                 }
                 continue;
@@ -117,6 +117,24 @@ class Request
         }
 
         return false;
+    }
+
+    /**
+     * Compares two IPs for equality using their canonical binary form, so
+     * differing IPv6 text representations (e.g. 2001:db8::1 vs
+     * 2001:0db8:0000::1) still compare equal. Falls back to string compare
+     * for non-IP values.
+     */
+    private function ipEquals(string $a, string $b): bool
+    {
+        $packedA = @inet_pton($a);
+        $packedB = @inet_pton($b);
+
+        if ($packedA === false || $packedB === false) {
+            return $a === $b;
+        }
+
+        return $packedA === $packedB;
     }
 
     private function ipInCidr(string $ip, string $cidr): bool
