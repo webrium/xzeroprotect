@@ -109,20 +109,68 @@ class Storage
     // Violation tracking
     // -------------------------------------------------------------------------
 
-    public function incrementViolation(string $ip): int
+    /**
+     * Records a violation and returns the count within the rolling
+     * $decayWindow. Stored as a timestamp list, exactly like the rate
+     * limiter, so an old, unrelated blip ages out instead of counting
+     * against a client forever.
+     *
+     * $cooldown debounces repeat calls: a burst of many over-limit requests
+     * inside one legitimate page load must not, by itself, add up to an
+     * auto-ban. Pass 0 (the default) to record every call — appropriate for
+     * violation types that are each independently suspicious, such as a
+     * blocked path or a payload match. A caller that can fire many times for
+     * a single real event (rate-limit overflow during one burst) should pass
+     * a cooldown so only the first call in that span is recorded.
+     *
+     * Read, decay, and write happen under one exclusive lock — the same
+     * lost-update risk that applied to the rate counter applies here.
+     */
+    public function incrementViolation(string $ip, int $decayWindow = 3600, int $cooldown = 0): int
     {
-        $file  = $this->violationFile($ip);
-        $data  = $this->readJson($file) ?? ['count' => 0, 'first' => time()];
-        $data['count']++;
-        $data['last'] = time();
-        $this->writeJson($file, $data);
-        return $data['count'];
+        $handle = @fopen($this->violationFile($ip), 'c+');
+
+        if ($handle === false) {
+            return 0; // unwritable storage must not break the request
+        }
+
+        try {
+            flock($handle, LOCK_EX);
+
+            $timestamps = $this->decayedTimestamps($handle, $decayWindow);
+            $now        = time();
+            $last       = $timestamps === [] ? null : $timestamps[count($timestamps) - 1];
+
+            if ($cooldown <= 0 || $last === null || ($now - $last) >= $cooldown) {
+                $timestamps[] = $now;
+            }
+
+            $this->writeTimestamps($handle, $timestamps);
+
+            return count($timestamps);
+        } finally {
+            flock($handle, LOCK_UN);
+            fclose($handle);
+        }
     }
 
-    public function getViolationCount(string $ip): int
+    /**
+     * Current violation count within the rolling $decayWindow. Read-only —
+     * does not prune the stored list, matching getRateCount()'s behavior.
+     */
+    public function getViolationCount(string $ip, int $decayWindow = 3600): int
     {
-        $data = $this->readJson($this->violationFile($ip));
-        return $data['count'] ?? 0;
+        $file = $this->violationFile($ip);
+        $now  = time();
+        $data = $this->readJson($file);
+
+        // Self-heals a pre-decay-window violation file (an object with
+        // count/first/last keys) into the new format: 'count' is far smaller
+        // than any real timestamp, so it ages out on the next write and only
+        // the genuine 'first'/'last' timestamps are ever counted meanwhile.
+        $timestamps = is_array($data) ? array_values(array_filter($data, 'is_int')) : [];
+
+        return count(array_filter($timestamps, fn($t) => ($now - $t) < $decayWindow));
     }
 
     public function resetViolations(string $ip): void
@@ -135,10 +183,9 @@ class Storage
     // -------------------------------------------------------------------------
 
     /**
-     * Increments request counter for $ip within a sliding window.
-     * Returns the current count within the window.
-     */
-    /**
+     * Increments the request counter for $ip within a sliding window and
+     * returns the count within that window.
+     *
      * Read and write happen under one exclusive lock. Locking only the write,
      * as this used to, loses hits whenever two requests from the same IP
      * overlap — which is exactly when the counter matters.
@@ -400,6 +447,44 @@ class Storage
     private function writeJson(string $file, array $data): void
     {
         file_put_contents($file, json_encode($data), LOCK_EX);
+    }
+
+    /**
+     * Reads the timestamp list behind an already-locked handle and drops
+     * entries older than $decayWindow.
+     *
+     * Also the self-heal path for a pre-decay-window violation file: an
+     * object with count/first/last keys decodes to an array where 'count' is
+     * far smaller than any real timestamp, so it is filtered out here and
+     * only the genuine 'first'/'last' timestamps survive.
+     *
+     * @return array<int,int>
+     */
+    private function decayedTimestamps($handle, int $decayWindow): array
+    {
+        $contents = stream_get_contents($handle);
+        $data     = is_string($contents) ? json_decode($contents, true) : null;
+        $now      = time();
+
+        if (!is_array($data)) {
+            return [];
+        }
+
+        return array_values(array_filter(
+            $data,
+            fn($t): bool => is_int($t) && ($now - $t) < $decayWindow
+        ));
+    }
+
+    /**
+     * @param array<int,int> $timestamps
+     */
+    private function writeTimestamps($handle, array $timestamps): void
+    {
+        rewind($handle);
+        ftruncate($handle, 0);
+        fwrite($handle, json_encode($timestamps));
+        fflush($handle);
     }
 
     private function ensureDirectories(): void

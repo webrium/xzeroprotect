@@ -339,7 +339,19 @@ class XZeroProtect
 
         // Auto-ban logic
         if (!empty($this->autoBan['enabled'])) {
-            $violations = $this->storage->incrementViolation($request->ip);
+            $decayWindow = (int) ($this->autoBan['violation_window'] ?? 3600);
+
+            // A single page load can fire far more requests than the rate
+            // limit allows — a dashboard's async widgets, a flaky connection
+            // retrying, a few browser tabs. Every one of those over-limit
+            // requests is still blocked, but only the first per rate-limit
+            // window is recorded as a violation, so one legitimate burst
+            // cannot by itself accumulate an auto-ban. A scanner that keeps
+            // exceeding the limit continuously still racks up one violation
+            // every window, same as before.
+            $cooldown = $type === 'rate_limit' ? $this->rateLimit->getWindow() : 0;
+
+            $violations = $this->storage->incrementViolation($request->ip, $decayWindow, $cooldown);
             $threshold  = (int) ($this->autoBan['violations_threshold'] ?? 5);
 
             if ($violations >= $threshold) {
