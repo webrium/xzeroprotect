@@ -13,6 +13,8 @@ class PatternDetector
     private array $agents   = [];
     private array $payloads = [];  // [['label'=>string,'pattern'=>string]]
 
+    private bool $emptyAgentIsSuspicious = false;
+
     public function __construct(string $rulesDir)
     {
         $this->paths    = require $rulesDir . '/paths.php';
@@ -24,15 +26,131 @@ class PatternDetector
     // Path detection
     // -------------------------------------------------------------------------
 
+    /**
+     * Matches the request path against the blocked-path list.
+     *
+     * Patterns are matched per path segment, never as a loose substring of the
+     * whole URI. '/wp-admin/setup-config.php' is a probe; an article at
+     * '/posts/wordpress-security-vulnerabilities-2026' is not, and a firewall
+     * that cannot tell them apart 403s paying visitors and — through auto-ban —
+     * locks them out for a day.
+     *
+     * The query string is deliberately excluded. Attacks carried in query
+     * values are the payload scanner's job; matching path names against them
+     * turns an ordinary site search into a ban.
+     *
+     * Three kinds of pattern:
+     *   '../', '%2e%2e'  raw signature, matched anywhere — always hostile
+     *   '.env', '.sql'   extension, matched against the end of a segment
+     *   'wp-admin'       name, matched against a whole segment, with or
+     *                    without a file extension
+     */
     public function isSuspiciousPath(string $uri): bool
     {
-        $uri = urldecode(strtolower($uri));
+        $rawPath  = strtolower($this->stripQuery($uri));
+        $path     = self::normalize($rawPath);
+        $segments = $this->segments($path);
+
         foreach ($this->paths as $pattern) {
-            if (strpos($uri, strtolower($pattern)) !== false) {
-                return true;
+            $pattern = strtolower(trim($pattern));
+
+            if ($pattern === '') {
+                continue;
+            }
+
+            if ($this->isRawSignature($pattern)) {
+                if (strpos($path, $pattern) !== false || strpos($rawPath, $pattern) !== false) {
+                    return true;
+                }
+                continue;
+            }
+
+            if ($pattern[0] === '.') {
+                foreach ($segments as $segment) {
+                    // '.env' matches '.env', 'backup.env', and '.env.bak'
+                    if ($segment === $pattern
+                        || str_ends_with($segment, $pattern)
+                        || str_starts_with($segment, $pattern . '.')
+                    ) {
+                        return true;
+                    }
+                }
+                continue;
+            }
+
+            foreach ($segments as $segment) {
+                // 'wp-login' matches 'wp-login' and 'wp-login.php'
+                if ($segment === $pattern || $this->withoutExtension($segment) === $pattern) {
+                    return true;
+                }
             }
         }
+
         return false;
+    }
+
+    /**
+     * Repeatedly percent-decodes until the value stops changing, so a
+     * double-encoded '..%252f' is seen for what it is. Bounded to keep a
+     * crafted input from looping.
+     */
+    public static function normalize(string $value): string
+    {
+        for ($pass = 0; $pass < 3; $pass++) {
+            $decoded = urldecode($value);
+
+            if ($decoded === $value) {
+                break;
+            }
+
+            $value = $decoded;
+        }
+
+        return str_replace("\0", '', $value);
+    }
+
+    private function stripQuery(string $uri): string
+    {
+        $mark = strpos($uri, '?');
+
+        return $mark === false ? $uri : substr($uri, 0, $mark);
+    }
+
+    /**
+     * @return array<int,string>
+     */
+    private function segments(string $path): array
+    {
+        return array_values(array_filter(
+            explode('/', str_replace('\\', '/', $path)),
+            fn(string $segment): bool => $segment !== ''
+        ));
+    }
+
+    /**
+     * Traversal signatures contain a separator or an escape, so they can never
+     * be a legitimate segment name and are matched raw.
+     */
+    private function isRawSignature(string $pattern): bool
+    {
+        return str_contains($pattern, '/')
+            || str_contains($pattern, '\\')
+            || str_contains($pattern, '%');
+    }
+
+    private function withoutExtension(string $segment): string
+    {
+        $dot = strrpos($segment, '.');
+
+        if ($dot === false || $dot === 0) {
+            return $segment;
+        }
+
+        $extension = substr($segment, $dot + 1);
+
+        return preg_match('/^[a-z0-9]{1,6}$/', $extension) === 1
+            ? substr($segment, 0, $dot)
+            : $segment;
     }
 
     public function addPath(string $pattern): void
@@ -64,10 +182,20 @@ class PatternDetector
     // User-Agent detection
     // -------------------------------------------------------------------------
 
+    /**
+     * An absent User-Agent is unusual, not hostile: feed readers, uptime
+     * probes, and some proxies send none. Treating it as an attack feeds
+     * auto_ban and locks those clients out, so it is off by default.
+     */
+    public function treatEmptyAgentAsSuspicious(bool $suspicious = true): void
+    {
+        $this->emptyAgentIsSuspicious = $suspicious;
+    }
+
     public function isSuspiciousAgent(string $userAgent): bool
     {
         if (trim($userAgent) === '') {
-            return true; // empty UA is suspicious
+            return $this->emptyAgentIsSuspicious;
         }
 
         $ua = strtolower($userAgent);
@@ -106,11 +234,16 @@ class PatternDetector
      */
     public function detectPayload(string $input): ?string
     {
+        // Match the decoded form as well as what arrived, so a double-encoded
+        // payload cannot hide behind one round of percent-escaping.
+        $decoded = self::normalize($input);
+
         foreach ($this->payloads as $entry) {
-            if (preg_match($entry['pattern'], $input)) {
+            if (preg_match($entry['pattern'], $input) || preg_match($entry['pattern'], $decoded)) {
                 return $entry['label'];
             }
         }
+
         return null;
     }
 

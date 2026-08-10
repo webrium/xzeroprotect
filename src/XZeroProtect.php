@@ -62,6 +62,7 @@ class XZeroProtect
         // Sub-components
         $rulesDir          = $config['rules_path'] ?? dirname(__DIR__) . '/rules';
         $this->patterns    = new PatternDetector($rulesDir);
+        $this->patterns->treatEmptyAgentAsSuspicious((bool) ($config['empty_user_agent_suspicious'] ?? false));
         $this->crawlers    = new CrawlerVerifier($rulesDir, $this->storage, $config['crawler_cache'] ?? []);
         $this->visits      = new VisitFilter($rulesDir, $config['tracking'] ?? []);
         $this->ip          = new IPManager($this->storage);
@@ -145,9 +146,14 @@ class XZeroProtect
             return;
         }
 
-        // Check for whitelisted paths
+        // Check for whitelisted paths. Matched on segment boundaries, so
+        // whitelisting '/health' does not also exempt '/healthcheck-evil'.
+        $path = $request->path();
+
         foreach ($this->config['whitelist']['paths'] ?? [] as $allowedPath) {
-            if (strpos($request->uri, $allowedPath) === 0) {
+            $allowed = rtrim((string) $allowedPath, '/');
+
+            if ($allowed !== '' && ($path === $allowed || str_starts_with($path, $allowed . '/'))) {
                 return;
             }
         }
