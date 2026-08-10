@@ -16,6 +16,7 @@ class Storage
     private const DIR_RATE        = 'rate';
     private const DIR_VIOLATIONS  = 'violations';
     private const DIR_LOGS        = 'logs';
+    private const DIR_DNS         = 'dns';
 
     public function __construct(string $basePath)
     {
@@ -160,6 +161,88 @@ class Storage
     }
 
     // -------------------------------------------------------------------------
+    // Crawler DNS verification cache
+    // -------------------------------------------------------------------------
+
+    /**
+     * Returns a cached crawler-verification verdict, or null when there is no
+     * usable entry — missing, corrupt, or expired.
+     *
+     * A corrupt entry is treated as a miss rather than an error: the cost of
+     * re-running the lookup is far smaller than failing the request.
+     */
+    public function readDnsCache(string $key): ?bool
+    {
+        $file = $this->dnsFile($key);
+        $data = $this->readJson($file);
+
+        if ($data === null
+            || !isset($data['trusted'], $data['expires'])
+            || !is_bool($data['trusted'])
+            || !is_int($data['expires'])
+        ) {
+            return null;
+        }
+
+        if (time() > $data['expires']) {
+            @unlink($file);
+            return null;
+        }
+
+        return $data['trusted'];
+    }
+
+    /**
+     * Stores a verification verdict. A $ttl of 0 or less disables caching for
+     * this entry.
+     *
+     * Write failures are ignored on purpose — a cache that cannot be written
+     * must degrade into extra DNS lookups, never into a broken request.
+     */
+    public function writeDnsCache(string $key, bool $trusted, int $ttl): void
+    {
+        if ($ttl <= 0) {
+            return;
+        }
+
+        @file_put_contents($this->dnsFile($key), json_encode([
+            'trusted'   => $trusted,
+            'cached_at' => time(),
+            'expires'   => time() + $ttl,
+        ]), LOCK_EX);
+    }
+
+    public function deleteDnsCache(string $key): void
+    {
+        @unlink($this->dnsFile($key));
+    }
+
+    /**
+     * Removes expired and unreadable cache entries. Safe to call from cron.
+     */
+    public function cleanupDnsCache(): void
+    {
+        foreach (glob($this->dir(self::DIR_DNS) . '/*.json') ?: [] as $file) {
+            $data = $this->readJson($file);
+
+            if ($data === null
+                || !isset($data['expires'])
+                || !is_int($data['expires'])
+                || time() > $data['expires']
+            ) {
+                @unlink($file);
+            }
+        }
+    }
+
+    public function clearDnsCache(): void
+    {
+        foreach (glob($this->dir(self::DIR_DNS) . '/*.json') ?: [] as $file) {
+            @unlink($file);
+        }
+    }
+
+    // -------------------------------------------------------------------------
     // Logging
     // -------------------------------------------------------------------------
 
@@ -244,6 +327,16 @@ class Storage
         return $this->dir(self::DIR_RATE) . '/' . $this->safeFilename($ip) . '.json';
     }
 
+    /**
+     * Cache keys are hashed rather than sanitized, so the filename is always
+     * plain hex: no traversal, and no leading dot that would hide the entry
+     * from the glob() used by cleanup.
+     */
+    private function dnsFile(string $key): string
+    {
+        return $this->dir(self::DIR_DNS) . '/' . sha1($key) . '.json';
+    }
+
     private function safeFilename(string $ip): string
     {
         return preg_replace('/[^a-zA-Z0-9._\-]/', '_', $ip);
@@ -286,7 +379,7 @@ class Storage
 
     private function ensureDirectories(): void
     {
-        foreach ([self::DIR_BANS, self::DIR_RATE, self::DIR_VIOLATIONS, self::DIR_LOGS] as $sub) {
+        foreach ([self::DIR_BANS, self::DIR_RATE, self::DIR_VIOLATIONS, self::DIR_LOGS, self::DIR_DNS] as $sub) {
             $path = $this->dir($sub);
             if (!is_dir($path)) {
                 mkdir($path, 0755, true);

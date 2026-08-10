@@ -27,6 +27,7 @@ class XZeroProtect
     public Logger          $logger;
     public ?ApacheBlocker  $apache = null;
     public CrawlerVerifier $crawlers;
+    public VisitFilter     $visits;
 
     private array   $config;
     private Storage $storage;
@@ -35,8 +36,13 @@ class XZeroProtect
     private array   $autoBan;
 
     // Visitor tracking
+    public const TRACK_IMMEDIATE = 'immediate';
+    public const TRACK_SHUTDOWN  = 'shutdown';
+
     private bool      $trackingEnabled  = false;
     private ?\Closure $visitorCallback  = null;
+    private string    $trackingWhen     = self::TRACK_IMMEDIATE;
+    private array     $trackedStatuses  = [];
 
     // -------------------------------------------------------------------------
     // Factory / constructor
@@ -56,7 +62,8 @@ class XZeroProtect
         // Sub-components
         $rulesDir          = $config['rules_path'] ?? dirname(__DIR__) . '/rules';
         $this->patterns    = new PatternDetector($rulesDir);
-        $this->crawlers    = new CrawlerVerifier($rulesDir);
+        $this->crawlers    = new CrawlerVerifier($rulesDir, $this->storage, $config['crawler_cache'] ?? []);
+        $this->visits      = new VisitFilter($rulesDir, $config['tracking'] ?? []);
         $this->ip          = new IPManager($this->storage);
         $this->rateLimit   = new RateLimiter(
             $this->storage,
@@ -70,6 +77,10 @@ class XZeroProtect
             (int)  ($config['log']['max_file_size'] ?? 10),
             (int)  ($config['log']['keep_days']     ?? 30)
         );
+
+        // Visitor tracking
+        $this->setTrackingWhen((string) ($config['tracking']['when'] ?? self::TRACK_IMMEDIATE));
+        $this->setTrackedStatuses((array) ($config['tracking']['only_status'] ?? [200]));
 
         // Whitelisted IPs
         foreach ($config['whitelist']['ips'] ?? [] as $cidr) {
@@ -262,6 +273,47 @@ class XZeroProtect
         return $this->trackingEnabled;
     }
 
+    /**
+     * When the tracking callback fires.
+     *
+     * 'immediate' — during run(), before the app has routed anything.
+     * 'shutdown'  — once the response is complete, so the HTTP status is known
+     *               and setTrackedStatuses() can drop 404s, redirects, and
+     *               errors that would otherwise be counted as page visits.
+     *
+     * Any value other than 'shutdown' means immediate.
+     */
+    public function setTrackingWhen(string $when): void
+    {
+        $this->trackingWhen = strtolower(trim($when)) === self::TRACK_SHUTDOWN
+            ? self::TRACK_SHUTDOWN
+            : self::TRACK_IMMEDIATE;
+    }
+
+    public function getTrackingWhen(): string
+    {
+        return $this->trackingWhen;
+    }
+
+    /**
+     * Response codes that count as a visit. Only consulted in 'shutdown' mode —
+     * during run() nothing has been routed yet, so no status exists.
+     *
+     * An empty list records the visit whatever the response was.
+     *
+     * @param array<int,int> $codes
+     */
+    public function setTrackedStatuses(array $codes): void
+    {
+        $this->trackedStatuses = array_values(array_unique(array_map('intval', $codes)));
+    }
+
+    /** @return array<int,int> */
+    public function getTrackedStatuses(): array
+    {
+        return $this->trackedStatuses;
+    }
+
     // -------------------------------------------------------------------------
     // Private helpers
     // -------------------------------------------------------------------------
@@ -331,11 +383,64 @@ class XZeroProtect
             return;
         }
 
+        // Passing the firewall makes a request legitimate, not a page view.
+        if (!$this->visits->shouldTrack($request)) {
+            return;
+        }
+
+        // Built now, dispatched possibly later, so the recorded timestamp is
+        // when the visitor arrived rather than when the response finished.
+        $visit = new VisitInfo($request);
+
+        if ($this->trackingWhen === self::TRACK_SHUTDOWN) {
+            $this->deferToShutdown(function () use ($visit) {
+                $this->dispatchVisit($visit);
+            });
+
+            return;
+        }
+
+        $this->dispatchVisit($visit);
+    }
+
+    /**
+     * Hand the visit to the callback, unless the response turned out not to be
+     * a page the visitor actually saw.
+     */
+    private function dispatchVisit(VisitInfo $visit): void
+    {
+        if ($this->trackingWhen === self::TRACK_SHUTDOWN
+            && $this->trackedStatuses !== []
+            && !in_array($this->responseStatus(), $this->trackedStatuses, true)
+        ) {
+            return;
+        }
+
         try {
-            ($this->visitorCallback)(new VisitInfo($request));
+            ($this->visitorCallback)($visit);
         } catch (\Throwable) {
             // Tracking must never crash the application
         }
+    }
+
+    /**
+     * Runs $callback after the response is complete. Overridable so the
+     * deferred path can be tested without ending the process.
+     */
+    protected function deferToShutdown(\Closure $callback): void
+    {
+        register_shutdown_function($callback);
+    }
+
+    /**
+     * Final HTTP status of the response. Overridable for the same reason;
+     * falls back to 200 on SAPIs that do not track one.
+     */
+    protected function responseStatus(): int
+    {
+        $code = http_response_code();
+
+        return is_int($code) ? $code : 200;
     }
 
     private function defaultStoragePath(): string
@@ -348,15 +453,34 @@ class XZeroProtect
         return ($_SERVER['DOCUMENT_ROOT'] ?? getcwd()) . '/.htaccess';
     }
 
+    /**
+     * Sections are merged key by key so overriding one check leaves the rest
+     * alone. Value lists are replaced wholesale, because merging them by index
+     * would leave the tail of the default behind — and would make it
+     * impossible to clear a list, e.g. 'methods' => [] to accept any method.
+     */
     private static function mergeConfig(array $defaults, array $overrides): array
     {
         foreach ($overrides as $key => $value) {
-            if (is_array($value) && isset($defaults[$key]) && is_array($defaults[$key])) {
+            if (is_array($value)
+                && isset($defaults[$key])
+                && is_array($defaults[$key])
+                && !self::isList($value)
+                && !self::isList($defaults[$key])
+            ) {
                 $defaults[$key] = self::mergeConfig($defaults[$key], $value);
             } else {
                 $defaults[$key] = $value;
             }
         }
         return $defaults;
+    }
+
+    /**
+     * array_is_list() equivalent; this package still supports PHP 8.0.
+     */
+    private static function isList(array $array): bool
+    {
+        return $array === [] || array_keys($array) === range(0, count($array) - 1);
     }
 }
