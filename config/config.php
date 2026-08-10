@@ -34,12 +34,24 @@ return [
     |--------------------------------------------------------------------------
     | Auto-Ban Settings
     |--------------------------------------------------------------------------
+    | violations_threshold : violations within violation_window before a ban
+    | violation_window      : rolling window (seconds) violations are counted
+    |                         in — an old, one-off violation ages out instead
+    |                         of counting against a client forever
+    | ban_duration          : seconds, 0 = permanent
+    | permanent_after_bans  : temp bans before escalating to permanent
+    |
+    | A rate-limit violation is recorded at most once per rate-limit window
+    | (see 'rate_limit' below), no matter how many individual requests
+    | overflowed it — a single bursty page load must not, by itself, add up
+    | to a ban. Sustained flooding still racks up one violation every window.
     */
     'auto_ban' => [
         'enabled'              => true,
-        'violations_threshold' => 10,      // violations before ban
-        'ban_duration'         => 86400,   // seconds (24h), 0 = permanent
-        'permanent_after_bans' => 3,       // X temp bans → permanent
+        'violations_threshold' => 10,
+        'violation_window'     => 3600,
+        'ban_duration'         => 86400,
+        'permanent_after_bans' => 3,
     ],
 
     /*

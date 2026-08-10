@@ -89,7 +89,8 @@ $firewall = XZeroProtect::init([
     // --- Automatic banning ---
     'auto_ban' => [
         'enabled'              => true,
-        'violations_threshold' => 10,     // violations before a ban is issued
+        'violations_threshold' => 10,     // violations within violation_window before a ban
+        'violation_window'     => 3600,   // rolling window (seconds) violations are counted in
         'ban_duration'         => 86400,  // ban length in seconds (24 h)
         'permanent_after_bans' => 3,      // escalate to permanent after N bans
     ],
@@ -287,6 +288,10 @@ $firewall = XZeroProtect::init([
     ],
 ]);
 ```
+
+Every request past the limit is still blocked — that part is unconditional. But a real page load can fire far more requests than the limit in one burst: a dashboard's async widgets, a flaky connection retrying, a few open tabs. A single such burst is not an attack, so it is recorded as **at most one** `auto_ban` violation per rate-limit window, no matter how many individual requests overflowed it. A client that keeps exceeding the limit across many separate windows — the thing `auto_ban` exists to catch — still racks up one violation per window and is banned once `violations_threshold` is reached.
+
+Violations also decay: only those within the rolling `violation_window` (default 1h) count toward the threshold, so an old, one-off blip does not sit on a client's record forever.
 
 ---
 
