@@ -145,9 +145,31 @@ $firewall->run();
 
 ## Detection Modules
 
+> ### Accuracy comes first
+>
+> A false positive costs more than a false negative. A missed probe gets a `404` from your router; a wrongly blocked visitor gets a `403`, and with `auto_ban` on, loses access for a day — on a carrier NAT, so do thousands of other people.
+>
+> Two rules follow from that, and they are enforced by `tests/DetectionAccuracyTest.php`:
+>
+> - **Paths are matched per segment, and the query string is never examined.** `wp-admin` matches `/wp-admin/setup-config.php`, not `/posts/how-i-left-wp-admin-behind`. `/search?q=wordpress` is a site search, not an attack.
+> - **Payload patterns must require syntax that prose does not contain.** These run against comment boxes and support tickets. `SELECT … FROM` is also "Select a plan from the list", `#` is also a markdown heading and the C# language, and a link ending in `.html` is a link.
+>
+> Ordinary English words are not safe pattern entries even as whole segments, so `administrator`, `wordpress`, `drupal` and bare `changelog` are **not** in the defaults. Add them if they cannot be pages on your site.
+
 ### Path Detection
 
 Blocks requests targeting sensitive or non-existent paths. Because a modern routed PHP app has no `.php` files in the URL, you can add that pattern to immediately reject the flood of `index.php?id=` scanner probes.
+
+Patterns are matched against path segments:
+
+| Pattern form | Matches | Does not match |
+|---|---|---|
+| `wp-admin` | `/wp-admin/`, `/wp-admin/x.php`, `/blog/wp-admin` | `/posts/leaving-wp-admin` |
+| `phpinfo` | `/phpinfo.php` | `/posts/reading-phpinfo-output` |
+| `.env` | `/.env`, `/config/.env`, `/.env.bak` | `/posts/dotenv-guide` |
+| `../`, `%2e%2e` | anywhere in the URI — always hostile | — |
+
+Percent-encoding is decoded until stable first, so `/wp-admin%2Fsetup.php` and `..%252f..%252f` are matched in their decoded form.
 
 ```php
 // Add individual patterns
@@ -184,7 +206,13 @@ $firewall->patterns->removePath('xmlrpc');
 
 ### User-Agent Detection
 
-Identifies and blocks known scanner, brute-force, and exploit tool signatures. Empty User-Agent strings are treated as suspicious by default.
+Identifies and blocks known scanner, brute-force, and exploit tool signatures.
+
+An **empty User-Agent is allowed by default**. Feed readers, uptime probes, and some proxies send none; an absent UA is unusual, not hostile, and counting it as a violation fed `auto_ban` with legitimate clients. Enable it only if every client of your app is known to send one:
+
+```php
+XZeroProtect::init(['empty_user_agent_suspicious' => true]);
+```
 
 ```php
 $firewall->patterns->addAgent('custom-bad-bot');
@@ -210,7 +238,9 @@ $firewall->patterns->removeAgent('curl'); // allow curl if your API clients use 
 
 ### Payload Detection
 
-Scans GET parameters, POST body, raw input, and cookies for attack signatures using compiled regular expressions.
+Scans GET parameters, POST body, raw input, and cookies for attack signatures using compiled regular expressions. Input is percent-decoded until stable before matching, so double-encoded payloads are seen in their decoded form.
+
+**Known limitation:** HTML-entity obfuscation inside an attribute (`<body background="javascript&colon;">`) is not detected. Decoding entities before matching would flag any prose that merely quotes HTML, which costs more than this bypass does — output escaping, not the firewall, is the defence against stored XSS.
 
 ```php
 // Add a custom pattern

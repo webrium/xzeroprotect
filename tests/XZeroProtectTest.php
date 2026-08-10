@@ -242,10 +242,22 @@ class XZeroProtectTest extends TestCase
         $this->assertTrue($d->isSuspiciousAgent('sqlmap/1.6'));
     }
 
-    public function test_empty_agent_is_suspicious(): void
+    public function test_empty_agent_is_allowed_by_default(): void
+    {
+        // Unusual is not hostile: feed readers and uptime probes send no UA,
+        // and blocking them fed auto_ban with legitimate clients.
+        $d = $this->makeDetector();
+        $this->assertFalse($d->isSuspiciousAgent(''));
+    }
+
+    public function test_empty_agent_is_suspicious_when_opted_in(): void
     {
         $d = $this->makeDetector();
+        $d->treatEmptyAgentAsSuspicious();
+
         $this->assertTrue($d->isSuspiciousAgent(''));
+        $this->assertTrue($d->isSuspiciousAgent('   '));
+        $this->assertFalse($d->isSuspiciousAgent('Mozilla/5.0 Chrome/124'));
     }
 
     public function test_clean_agent_passes(): void

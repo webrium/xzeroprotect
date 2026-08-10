@@ -138,18 +138,43 @@ class Storage
      * Increments request counter for $ip within a sliding window.
      * Returns the current count within the window.
      */
+    /**
+     * Read and write happen under one exclusive lock. Locking only the write,
+     * as this used to, loses hits whenever two requests from the same IP
+     * overlap — which is exactly when the counter matters.
+     */
     public function trackRequest(string $ip, int $windowSeconds): int
     {
-        $file   = $this->rateFile($ip);
-        $now    = time();
-        $data   = $this->readJson($file) ?? [];
+        $handle = @fopen($this->rateFile($ip), 'c+');
 
-        // Remove timestamps outside the window
-        $data = array_filter($data, fn($t) => ($now - $t) < $windowSeconds);
-        $data[] = $now;
+        if ($handle === false) {
+            return 0; // unwritable storage must not break the request
+        }
 
-        $this->writeJson($file, array_values($data));
-        return count($data);
+        try {
+            flock($handle, LOCK_EX);
+
+            $contents = stream_get_contents($handle);
+            $data     = is_string($contents) ? json_decode($contents, true) : null;
+            $now      = time();
+
+            $data = is_array($data)
+                ? array_filter($data, fn($t) => is_int($t) && ($now - $t) < $windowSeconds)
+                : [];
+
+            $data[] = $now;
+            $data   = array_values($data);
+
+            rewind($handle);
+            ftruncate($handle, 0);
+            fwrite($handle, json_encode($data));
+            fflush($handle);
+
+            return count($data);
+        } finally {
+            flock($handle, LOCK_UN);
+            fclose($handle);
+        }
     }
 
     public function getRateCount(string $ip, int $windowSeconds): int

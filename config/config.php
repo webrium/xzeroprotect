@@ -55,6 +55,17 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Empty User-Agent
+    |--------------------------------------------------------------------------
+    | Feed readers, uptime probes, and some proxies send no User-Agent header.
+    | An absent UA is unusual, not hostile, so it does not count as a violation
+    | by default — treating it as one fed auto_ban with legitimate clients.
+    | Enable only if every client of this app is known to send a UA.
+    */
+    'empty_user_agent_suspicious' => false,
+
+    /*
+    |--------------------------------------------------------------------------
     | Checks — enable/disable individual detection modules
     |--------------------------------------------------------------------------
     */
