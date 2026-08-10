@@ -79,6 +79,24 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Crawler Verification Cache
+    |--------------------------------------------------------------------------
+    | Double-DNS verification costs two blocking network round-trips — often
+    | several hundred milliseconds during which a PHP worker does nothing but
+    | wait. Verdicts are cached on disk per IP + expected rDNS suffix.
+    |
+    | Failed verifications use the shorter negative_ttl so a transient resolver
+    | outage cannot lock a legitimate crawler out for a full day, while still
+    | absorbing floods of spoofed crawler User-Agents.
+    */
+    'crawler_cache' => [
+        'enabled'      => true,
+        'ttl'          => 86400,   // verified crawler (24h)
+        'negative_ttl' => 3600,    // failed verification (1h)
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Trusted Proxies
     |--------------------------------------------------------------------------
     | IPs/CIDRs of reverse proxies, load balancers, or CDNs (e.g. Cloudflare)
@@ -114,6 +132,43 @@ return [
     'block_response' => [
         'code'    => 403,
         'message' => 'Access Denied',
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Visitor Tracking Filter
+    |--------------------------------------------------------------------------
+    | Decides which of the requests that passed the firewall count as a real
+    | page visit. Nothing here ever blocks a request — it only keeps assets,
+    | favicons, and non-page methods out of your visit statistics.
+    |
+    | filter             : false restores pre-filter behaviour (record everything)
+    | when               : 'immediate' fires during run(); 'shutdown' waits until
+    |                      the response is finished so the HTTP status is known
+    | only_status        : response codes that count as a visit — 'shutdown'
+    |                      only; [] records regardless of the response
+    | methods            : methods that may count as a visit; [] accepts any
+    | use_sec_fetch_dest : trust the browser's own statement of intent
+    | track_dest         : Sec-Fetch-Dest values that may count as a page
+    | ignore_ajax        : skip XMLHttpRequest calls
+    | ignore_prefetch    : skip speculative prefetch / prerender loads
+    | ignore_extensions  : added to the defaults in rules/ignore_tracking.php
+    | ignore_paths       : added to the defaults; matched as a path prefix
+    |
+    | Sec-Fetch-Dest can only reject a request, never wave one through: a page
+    | navigation to a path you ignored on purpose stays ignored.
+    */
+    'tracking' => [
+        'filter'             => true,
+        'when'               => 'immediate',
+        'only_status'        => [200],
+        'methods'            => ['GET'],
+        'use_sec_fetch_dest' => true,
+        'track_dest'         => ['document'],
+        'ignore_ajax'        => true,
+        'ignore_prefetch'    => true,
+        'ignore_extensions'  => [],
+        'ignore_paths'       => [],
     ],
 
     /*

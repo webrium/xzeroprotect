@@ -13,19 +13,44 @@ namespace Webrium\XZeroProtect;
  *   3. gethostbyname($hostname)    → re-resolved IP
  *   4. confirm re-resolved IP === original IP
  *
- * DNS lookups are cached in-memory for the lifetime of the request.
+ * Verification is expensive — two blocking network round-trips, commonly
+ * several hundred milliseconds while a PHP worker sits idle. Verdicts are
+ * therefore cached on disk when a Storage instance is supplied, keyed by
+ * IP + expected suffix. Without one, caching falls back to in-memory only
+ * and lasts a single request.
+ *
+ * Failed verifications get a shorter TTL than successful ones, so a transient
+ * resolver outage cannot lock a legitimate crawler out for a whole day.
  */
 class CrawlerVerifier
 {
+    private const DEFAULT_TTL          = 86400;   // verified crawler: 24h
+    private const DEFAULT_NEGATIVE_TTL = 3600;    // failed verification: 1h
+
     /** @var array<array{name:string, ua_contains:string, verify_rdns:bool, rdns_suffix:string}> */
     private array $crawlers = [];
 
     /** In-memory DNS cache: ip → hostname */
     private array $dnsCache = [];
 
-    public function __construct(string $rulesDir)
+    /** In-memory verdict cache: cache key → bool */
+    private array $verdictCache = [];
+
+    private ?Storage $storage;
+    private bool     $cacheEnabled;
+    private int      $ttl;
+    private int      $negativeTtl;
+
+    /**
+     * @param array{enabled?:bool, ttl?:int, negative_ttl?:int} $cacheConfig
+     */
+    public function __construct(string $rulesDir, ?Storage $storage = null, array $cacheConfig = [])
     {
-        $this->crawlers = require $rulesDir . '/crawlers.php';
+        $this->crawlers     = require $rulesDir . '/crawlers.php';
+        $this->storage      = $storage;
+        $this->cacheEnabled = (bool) ($cacheConfig['enabled'] ?? true);
+        $this->ttl          = max(0, (int) ($cacheConfig['ttl']          ?? self::DEFAULT_TTL));
+        $this->negativeTtl  = max(0, (int) ($cacheConfig['negative_ttl'] ?? self::DEFAULT_NEGATIVE_TTL));
     }
 
     // -------------------------------------------------------------------------
@@ -101,6 +126,40 @@ class CrawlerVerifier
     }
 
     // -------------------------------------------------------------------------
+    // Verification cache
+    // -------------------------------------------------------------------------
+
+    /**
+     * Drop every cached verdict, in memory and on disk. Use after editing the
+     * crawler list, or from an admin panel.
+     */
+    public function clearCache(): void
+    {
+        $this->verdictCache = [];
+        $this->dnsCache     = [];
+
+        $this->storage?->clearDnsCache();
+    }
+
+    /**
+     * Remove expired entries only. Safe to call from cron.
+     */
+    public function cleanupCache(): void
+    {
+        $this->storage?->cleanupDnsCache();
+    }
+
+    public function isCacheEnabled(): bool
+    {
+        return $this->cacheEnabled;
+    }
+
+    public function isCachePersistent(): bool
+    {
+        return $this->cacheEnabled && $this->storage !== null;
+    }
+
+    // -------------------------------------------------------------------------
     // Private helpers
     // -------------------------------------------------------------------------
 
@@ -115,11 +174,73 @@ class CrawlerVerifier
     }
 
     /**
+     * Returns a cached verdict for this IP/suffix pair, consulting the
+     * in-memory layer first and disk second, or null on a miss.
+     */
+    private function readVerdict(string $key): ?bool
+    {
+        if (isset($this->verdictCache[$key])) {
+            return $this->verdictCache[$key];
+        }
+
+        if ($this->storage === null) {
+            return null;
+        }
+
+        $cached = $this->storage->readDnsCache($key);
+
+        if ($cached !== null) {
+            $this->verdictCache[$key] = $cached;
+        }
+
+        return $cached;
+    }
+
+    private function writeVerdict(string $key, bool $trusted): void
+    {
+        $this->verdictCache[$key] = $trusted;
+
+        $this->storage?->writeDnsCache($key, $trusted, $trusted ? $this->ttl : $this->negativeTtl);
+    }
+
+    /**
+     * Cache key for an IP/suffix pair. The IP is normalized first so the two
+     * text forms of one IPv6 address share a single entry. Storage takes care
+     * of turning this into a safe filename.
+     */
+    private function cacheKey(string $ip, string $suffix): string
+    {
+        return $this->normalizeIp($ip) . '|' . strtolower($suffix);
+    }
+
+    /**
+     * Cached wrapper around the double-DNS verification.
+     */
+    private function verifyViaDns(string $ip, string $suffix): bool
+    {
+        if (!$this->cacheEnabled) {
+            return $this->resolveAndVerify($ip, $suffix);
+        }
+
+        $key    = $this->cacheKey($ip, $suffix);
+        $cached = $this->readVerdict($key);
+
+        if ($cached !== null) {
+            return $cached;
+        }
+
+        $trusted = $this->resolveAndVerify($ip, $suffix);
+        $this->writeVerdict($key, $trusted);
+
+        return $trusted;
+    }
+
+    /**
      * Double-DNS verification:
      *  ip → hostname (must end with $suffix)
      *  hostname → ip (must match original ip, IPv4 or IPv6)
      */
-    private function verifyViaDns(string $ip, string $suffix): bool
+    private function resolveAndVerify(string $ip, string $suffix): bool
     {
         // Step 1: reverse lookup
         $hostname = $this->reverseLookup($ip);
@@ -145,7 +266,7 @@ class CrawlerVerifier
      *
      * @return array<int,string> List of resolved IPs (IPv4 + IPv6), normalized.
      */
-    private function forwardLookup(string $hostname): array
+    protected function forwardLookup(string $hostname): array
     {
         $ips = [];
 
@@ -186,7 +307,7 @@ class CrawlerVerifier
         return $packed === false ? $ip : (inet_ntop($packed) ?: $ip);
     }
 
-    private function reverseLookup(string $ip): ?string
+    protected function reverseLookup(string $ip): ?string
     {
         if (isset($this->dnsCache[$ip])) {
             return $this->dnsCache[$ip];
