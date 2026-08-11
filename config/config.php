@@ -198,11 +198,16 @@ return [
     |--------------------------------------------------------------------------
     | Logging
     |--------------------------------------------------------------------------
+    | auto_cleanup : sweep rotated .bak files older than keep_days, driven by
+    |                real log-write traffic (at most once/day) instead of a
+    |                system cron. Turn off only if you already run your own
+    |                cleanup (cron, logrotate, ...) and want to skip the check.
     */
     'log' => [
         'enabled'        => true,
         'max_file_size'  => 10,   // MB — rotate when exceeded
         'keep_days'      => 30,
+        'auto_cleanup'   => true,
     ],
 
 ];

@@ -18,6 +18,9 @@ class Storage
     private const DIR_LOGS        = 'logs';
     private const DIR_DNS         = 'dns';
 
+    // Minimum time between automatic log-cleanup runs (see dueForLogCleanup()).
+    private const LOG_CLEANUP_INTERVAL = 86400;
+
     public function __construct(string $basePath)
     {
         $this->basePath = rtrim($basePath, '/\\');
@@ -338,15 +341,74 @@ class Storage
         file_put_contents($file, $line, FILE_APPEND | LOCK_EX);
     }
 
-    public function readLogs(int $limit = 100): array
+    public function readLogs(int $limit = 100, int $offset = 0): array
     {
         $file = $this->dir(self::DIR_LOGS) . '/attacks.log';
         if (!file_exists($file)) {
             return [];
         }
 
-        $lines = file($file, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
-        return array_slice(array_reverse($lines), 0, $limit);
+        return $this->tailLines($file, $limit, $offset);
+    }
+
+    /**
+     * Number of log lines currently on disk (attacks.log only — rotated
+     * .bak files are history, not part of the "current log" count).
+     * A raw byte scan, not a per-line parse — cheap even near max_file_size.
+     */
+    public function countLogLines(): int
+    {
+        $file = $this->dir(self::DIR_LOGS) . '/attacks.log';
+        if (!file_exists($file)) {
+            return 0;
+        }
+
+        $content = file_get_contents($file);
+        if ($content === false || $content === '') {
+            return 0;
+        }
+
+        return substr_count($content, "\n");
+    }
+
+    /**
+     * Reads the last $limit lines (newest first) starting $offset lines
+     * back from the end, without loading the whole file. Reads backward in
+     * chunks — the same approach as `tail -n` — so cost scales with how far
+     * back the request reaches, not with total file size.
+     */
+    private function tailLines(string $file, int $limit, int $offset): array
+    {
+        if ($limit <= 0) {
+            return [];
+        }
+
+        $needed    = $offset + $limit;
+        $chunkSize = 8192;
+        $handle    = fopen($file, 'rb');
+        if ($handle === false) {
+            return [];
+        }
+
+        fseek($handle, 0, SEEK_END);
+        $pos    = ftell($handle);
+        $buffer = '';
+
+        while ($pos > 0 && substr_count($buffer, "\n") <= $needed) {
+            $read = min($chunkSize, $pos);
+            $pos -= $read;
+            fseek($handle, $pos);
+            $buffer = fread($handle, $read) . $buffer;
+        }
+
+        fclose($handle);
+
+        $lines = explode("\n", rtrim($buffer, "\n"));
+        if ($lines === ['']) {
+            return [];
+        }
+
+        return array_slice(array_reverse($lines), $offset, $limit);
     }
 
     public function cleanupLogs(int $keepDays = 30): void
@@ -359,6 +421,27 @@ class Storage
                 @unlink($file);
             }
         }
+    }
+
+    /**
+     * Lazily gates automatic log cleanup to at most once per
+     * self::LOG_CLEANUP_INTERVAL, driven by real log-write traffic instead
+     * of a system cron. The marker is touched immediately (before the
+     * caller runs cleanup) so a burst of concurrent requests doesn't all
+     * see "due" at once — cleanup itself is idempotent, so the rare race
+     * where two requests both run it is harmless.
+     */
+    public function dueForLogCleanup(): bool
+    {
+        $marker = $this->dir(self::DIR_LOGS) . '/.cleanup_at';
+        $last   = @filemtime($marker);
+
+        if ($last !== false && (time() - $last) < self::LOG_CLEANUP_INTERVAL) {
+            return false;
+        }
+
+        @touch($marker);
+        return true;
     }
 
     // -------------------------------------------------------------------------
