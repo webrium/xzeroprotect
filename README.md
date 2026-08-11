@@ -135,6 +135,7 @@ $firewall = XZeroProtect::init([
         'enabled'       => true,
         'max_file_size' => 10,   // MB — auto-rotated when exceeded
         'keep_days'     => 30,
+        'auto_cleanup'  => true, // sweep expired .bak files on real traffic, no cron needed
     ],
 
 ]);
@@ -485,9 +486,28 @@ Generated `.htaccess` block:
 // Read the most recent attack entries (newest first)
 $logs = $firewall->logger->recent(limit: 100);
 
-// Clean up rotated backup log files older than retention period
+// Page further back without loading the whole file
+$logs = $firewall->logger->recent(limit: 100, offset: 100);
+
+// Total lines currently in the active log — for building pagination
+// without reading (or parsing) every line
+$total = $firewall->logger->total();
+
+// Force a cleanup of rotated backups older than keep_days right now
 $firewall->logger->cleanup();
 ```
+
+`recent()` reads backward from the end of the log file in chunks (like
+`tail -n`), so cost scales with how far back a page reaches, not with total
+file size — reading the newest 100 lines out of a 10MB log doesn't load the
+10MB.
+
+Rotated `.bak` backups (see `max_file_size` above) are swept once they're
+older than `keep_days`. This runs on its own — no system cron needed:
+`log.auto_cleanup` (default `true`) checks on real log-write traffic,
+gated to at most once a day, so it adds no meaningful cost to the
+(already rare) attack-logging path. Set it to `false` only if you already
+run your own cleanup (cron, logrotate, ...).
 
 ### Accessing the firewall from outside bootstrap
 
