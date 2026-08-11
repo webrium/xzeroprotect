@@ -151,30 +151,62 @@ class LogRetentionTest extends TestCase
     }
 
     /**
-     * The internal read chunk is 8KB. A file spanning several chunks must
+     * Matches the previous file()-based implementation, which read with
+     * FILE_SKIP_EMPTY_LINES — a stray blank line (manual edit, an
+     * interrupted write) must not surface as a fake log entry.
+     */
+    public function test_blank_lines_are_skipped(): void
+    {
+        $this->writeRawLog("line-0000\n\nline-0001\n\n\nline-0002\n");
+        $this->assertSame(['line-0002', 'line-0001', 'line-0000'], $this->storage->readLogs(10));
+    }
+
+    /**
+     * The internal read chunk is 64KB. A file spanning several chunks must
      * still return exactly the right lines in the right order — including
      * a request whose boundary falls in the middle of a chunk.
      */
     public function test_reads_correctly_across_multiple_internal_chunks(): void
     {
-        // ~10 bytes/line * 3000 lines ≈ 30KB — several times the 8KB chunk.
-        $this->seedLines(3000);
+        // ~11 bytes/line * 30000 lines ≈ 330KB — several times the 64KB chunk.
+        $this->seedLines(30000);
 
         $newest20 = $this->storage->readLogs(20);
         $expectedNewest = [];
-        for ($i = 2999; $i > 2979; $i--) {
+        for ($i = 29999; $i > 29979; $i--) {
             $expectedNewest[] = sprintf('line-%04d', $i);
         }
         $this->assertSame($expectedNewest, $newest20);
 
         // A page deep enough to straddle multiple chunk boundaries.
-        $page = $this->storage->readLogs(5, 1000);
-        $this->assertSame(['line-1999', 'line-1998', 'line-1997', 'line-1996', 'line-1995'], $page);
+        $page = $this->storage->readLogs(5, 10000);
+        $this->assertSame(['line-19999', 'line-19998', 'line-19997', 'line-19996', 'line-19995'], $page);
 
-        $all = $this->storage->readLogs(5000);
-        $this->assertCount(3000, $all);
-        $this->assertSame('line-2999', $all[0]);
-        $this->assertSame('line-0000', $all[2999]);
+        $all = $this->storage->readLogs(50000);
+        $this->assertCount(30000, $all);
+        $this->assertSame('line-29999', $all[0]);
+        $this->assertSame('line-0000', $all[29999]);
+    }
+
+    /**
+     * Pins the earlier bug: rescanning the whole (growing) buffer for
+     * newlines each iteration, and rebuilding it with string concatenation
+     * ("$chunk . $buffer"), are both O(n^2) over the number of chunks —
+     * a deep read on a multi-MB file took ~0.4s instead of single-digit
+     * milliseconds. This bounds it generously (real runtime is ~10ms) so
+     * only an actual algorithmic regression trips it, not machine noise.
+     */
+    public function test_deep_offset_on_a_large_file_stays_fast(): void
+    {
+        $line = '2026-08-11 00:00:00 | ip=1.2.3.4 | type=sqli | uri=/x | reason=UNION SELECT | ua=sqlmap' . "\n";
+        $this->writeRawLog(str_repeat($line, 50000)); // ~4.5MB
+
+        $start = microtime(true);
+        $lines = $this->storage->readLogs(10, 49900);
+        $elapsed = microtime(true) - $start;
+
+        $this->assertCount(10, $lines);
+        $this->assertLessThan(1.0, $elapsed, 'a deep read must not degrade quadratically with file size');
     }
 
     // =========================================================================
