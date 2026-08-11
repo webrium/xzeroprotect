@@ -76,7 +76,8 @@ class XZeroProtect
             $this->storage,
             (bool) ($config['log']['enabled']       ?? true),
             (int)  ($config['log']['max_file_size'] ?? 10),
-            (int)  ($config['log']['keep_days']     ?? 30)
+            (int)  ($config['log']['keep_days']     ?? 30),
+            (bool) ($config['log']['auto_cleanup']  ?? true)
         );
 
         // Visitor tracking
