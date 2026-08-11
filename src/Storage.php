@@ -384,27 +384,40 @@ class Storage
         }
 
         $needed    = $offset + $limit;
-        $chunkSize = 8192;
+        $chunkSize = 65536;
         $handle    = fopen($file, 'rb');
         if ($handle === false) {
             return [];
         }
 
         fseek($handle, 0, SEEK_END);
-        $pos    = ftell($handle);
-        $buffer = '';
+        $pos          = ftell($handle);
+        $chunks       = [];
+        $newlineCount = 0;
 
-        while ($pos > 0 && substr_count($buffer, "\n") <= $needed) {
+        // Chunks are collected (newest-read-first, i.e. file-order-last)
+        // and joined once at the end with implode(), not repeatedly
+        // prepended with string concatenation in the loop — PHP strings
+        // are copy-on-write, so "$chunk . $buffer" copies the whole
+        // (growing) buffer on every iteration, which is O(n^2) over a deep
+        // read just like rescanning the buffer for newlines would be.
+        while ($pos > 0 && $newlineCount <= $needed) {
             $read = min($chunkSize, $pos);
             $pos -= $read;
             fseek($handle, $pos);
-            $buffer = fread($handle, $read) . $buffer;
+            $chunk          = fread($handle, $read);
+            $newlineCount  += substr_count($chunk, "\n");
+            $chunks[]       = $chunk;
         }
 
         fclose($handle);
 
-        $lines = explode("\n", rtrim($buffer, "\n"));
-        if ($lines === ['']) {
+        $buffer = implode('', array_reverse($chunks));
+        $lines  = array_values(array_filter(
+            explode("\n", rtrim($buffer, "\n")),
+            static fn (string $line): bool => $line !== ''
+        ));
+        if ($lines === []) {
             return [];
         }
 
