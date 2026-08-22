@@ -9,9 +9,10 @@ namespace Webrium\XZeroProtect;
  */
 class PatternDetector
 {
-    private array $paths    = [];
-    private array $agents   = [];
-    private array $payloads = [];  // [['label'=>string,'pattern'=>string]]
+    private array $paths        = [];
+    private array $agents       = [];
+    private array $payloads     = [];  // [['label'=>string,'pattern'=>string]]
+    private array $exemptFields = [];
 
     private bool $emptyAgentIsSuspicious = false;
 
@@ -263,5 +264,27 @@ class PatternDetector
     public function getPayloads(): array
     {
         return $this->payloads;
+    }
+
+    public function exemptField(string $fieldName): void
+    {
+        $this->exemptFields[strtolower(trim($fieldName))] = true;
+    }
+
+    public function exemptFields(array $fieldNames): void
+    {
+        foreach ($fieldNames as $name) {
+            $this->exemptField((string) $name);
+        }
+    }
+
+    public function getExemptFields(): array
+    {
+        return array_keys($this->exemptFields);
+    }
+
+    public function clearExemptFields(): void
+    {
+        $this->exemptFields = [];
     }
 }
