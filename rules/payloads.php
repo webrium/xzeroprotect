@@ -47,10 +47,6 @@ return [
     ['label' => 'xss_uri_scheme', 'pattern' => '/[a-z-]+\s*=\s*["\']?\s*(javascript|vbscript)\s*:/i'],
     ['label' => 'xss_svg_onload', 'pattern' => '/<\s*svg[^>]*\son[a-z]{2,15}\s*=/i'],
 
-    // ── Path traversal ─────────────────────────────────────────────────────
-    ['label' => 'traversal',      'pattern' => '/\.\.[\/\\\\]/'],
-    ['label' => 'traversal_enc',  'pattern' => '/%2e%2e(%2f|%5c|\/|\\\\)/i'],
-
     // ── PHP code injection ─────────────────────────────────────────────────
     ['label' => 'php_exec',       'pattern' => '/\b(system|exec|passthru|popen|proc_open|shell_exec)\s*\(\s*[\$\'"]/i'],
     ['label' => 'php_eval',       'pattern' => '/\beval\s*\(\s*(base64_decode|gzinflate|str_rot13|\$_)/i'],
@@ -59,10 +55,9 @@ return [
 
     // ── File inclusion ─────────────────────────────────────────────────────
     ['label' => 'lfi',            'pattern' => '/(\/etc\/(passwd|shadow)\b|\/proc\/self\/environ\b)/i'],
-    // A remote script pulled in as a parameter value. Extensions are anchored
-    // to the end of the URL, and .html is excluded — linking to a web page is
-    // not an attack.
-    ['label' => 'rfi',            'pattern' => '/\b(https?|ftp):\/\/[^\s"\'<>]+\.(php\d?|phtml|txt)(\?|#|&|$)/i'],
+    // Remote script inclusion (RFI) via parameters, query strings, or include/require statements.
+    // Ordinary URL links in prose (e.g. https://example.com/index.php) are preserved.
+    ['label' => 'rfi',            'pattern' => '/(?:\b(?:include|require)(?:_once)?\s*\(?\s*["\']?|[?&=]|\b(?:file|page|load|path|doc|view|template|uri|url)\s*=\s*["\']?)\s*(https?|ftp):\/\/[^\s"\'<>]+\.(php\d?|phtml)/i'],
 
     // ── Command injection ──────────────────────────────────────────────────
     // A shell separator, a command, and an argument. Requiring the argument
