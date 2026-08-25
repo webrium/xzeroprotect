@@ -92,6 +92,21 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Payload Scanning
+    |--------------------------------------------------------------------------
+    | Configure input sources and field exemptions for payload detection.
+    |
+    | exempt_fields : field/parameter names to exclude from payload inspection
+    |                 (e.g., ['content', 'body', 'description', 'message', 'code'])
+    | sources       : sources to scan. Default: ['get', 'post', 'cookies', 'raw']
+    */
+    'payload_scan' => [
+        'exempt_fields' => [],
+        'sources'       => ['get', 'post', 'cookies', 'raw'],
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Crawler Verification
     |--------------------------------------------------------------------------
     | When verify_rdns is true in crawlers.php, a double-DNS check is performed

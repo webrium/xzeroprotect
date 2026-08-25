@@ -172,25 +172,71 @@ class Request
     }
 
     /**
-     * Returns all user-supplied input as a flat string for payload scanning.
+     * Returns user-supplied input as a flat string for payload scanning.
+     *
+     * @param array<int,string> $exemptFields Field names to exclude from scanning (case-insensitive).
+     * @param array<int,string> $sources      Sources to include: 'get', 'post', 'cookies', 'raw'.
      */
-    public function rawInput(): string
+    public function rawInput(array $exemptFields = [], array $sources = ['get', 'post', 'cookies', 'raw']): string
     {
         $parts = [];
+        $exemptMap = array_fill_keys(array_map('strtolower', $exemptFields), true);
 
-        foreach ([$this->get, $this->post, $this->cookies] as $bag) {
-            foreach ($bag as $value) {
-                $parts[] = is_array($value) ? implode(' ', $value) : (string) $value;
-            }
+        $bags = [];
+        if (in_array('get', $sources, true)) {
+            $bags[] = $this->get;
+        }
+        if (in_array('post', $sources, true)) {
+            $bags[] = $this->post;
+        }
+        if (in_array('cookies', $sources, true)) {
+            $bags[] = $this->cookies;
+        }
+
+        foreach ($bags as $bag) {
+            $this->extractValues($bag, $exemptMap, $parts);
         }
 
         // Also include raw POST body (for JSON APIs, etc.)
-        $raw = file_get_contents('php://input');
-        if ($raw !== false && $raw !== '') {
-            $parts[] = $raw;
+        if (in_array('raw', $sources, true)) {
+            $raw = file_get_contents('php://input');
+            if ($raw !== false && $raw !== '') {
+                if (!empty($exemptMap) && str_starts_with(trim($raw), '{')) {
+                    $decoded = json_decode($raw, true);
+                    if (is_array($decoded)) {
+                        $this->extractValues($decoded, $exemptMap, $parts);
+                    } else {
+                        $parts[] = $raw;
+                    }
+                } else {
+                    $parts[] = $raw;
+                }
+            }
         }
 
         return implode(' ', $parts);
+    }
+
+    /**
+     * Recursively extracts values from an input array, skipping any exempt keys.
+     *
+     * @param array             $bag       Input dictionary / array.
+     * @param array<string,bool> $exemptMap Lowercase lookup table of exempt keys.
+     * @param array<int,string> &$parts    Accumulated value parts.
+     */
+    private function extractValues(array $bag, array $exemptMap, array &$parts): void
+    {
+        foreach ($bag as $key => $value) {
+            if (is_string($key) && isset($exemptMap[strtolower($key)])) {
+                continue;
+            }
+
+            if (is_array($value)) {
+                $this->extractValues($value, $exemptMap, $parts);
+            } else {
+                $parts[] = (string) $value;
+            }
+        }
     }
 
     /**

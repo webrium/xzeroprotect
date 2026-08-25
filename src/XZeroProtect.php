@@ -63,6 +63,9 @@ class XZeroProtect
         $rulesDir          = $config['rules_path'] ?? dirname(__DIR__) . '/rules';
         $this->patterns    = new PatternDetector($rulesDir);
         $this->patterns->treatEmptyAgentAsSuspicious((bool) ($config['empty_user_agent_suspicious'] ?? false));
+        if (!empty($config['payload_scan']['exempt_fields'])) {
+            $this->patterns->exemptFields((array) $config['payload_scan']['exempt_fields']);
+        }
         $this->crawlers    = new CrawlerVerifier($rulesDir, $this->storage, $config['crawler_cache'] ?? []);
         $this->visits      = new VisitFilter($rulesDir, $config['tracking'] ?? []);
         $this->ip          = new IPManager($this->storage);
@@ -194,7 +197,10 @@ class XZeroProtect
 
         // 6. Payload scanning
         if ($this->checkEnabled('payload')) {
-            $label = $this->patterns->detectPayload($request->rawInput());
+            $exemptFields = $this->patterns->getExemptFields();
+            $sources      = (array) ($this->config['payload_scan']['sources'] ?? ['get', 'post', 'cookies', 'raw']);
+            $input        = $request->rawInput($exemptFields, $sources);
+            $label        = $this->patterns->detectPayload($input);
             if ($label !== null) {
                 $this->handleViolation($request, 'payload', 'Payload match: ' . $label);
             }
@@ -240,6 +246,16 @@ class XZeroProtect
     public function getMode(): string
     {
         return $this->mode;
+    }
+
+    public function exemptField(string $fieldName): void
+    {
+        $this->patterns->exemptField($fieldName);
+    }
+
+    public function exemptFields(array $fieldNames): void
+    {
+        $this->patterns->exemptFields($fieldNames);
     }
 
     public function getStorage(): Storage

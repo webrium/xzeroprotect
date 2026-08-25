@@ -285,10 +285,16 @@ class XZeroProtectTest extends TestCase
         $this->assertNotNull($d->detectPayload('<script>alert(1)</script>'));
     }
 
-    public function test_payload_path_traversal(): void
+    public function test_payload_lfi(): void
     {
         $d = $this->makeDetector();
-        $this->assertSame('traversal', $d->detectPayload('../../etc/passwd'));
+        $this->assertSame('lfi', $d->detectPayload('../../etc/passwd'));
+    }
+
+    public function test_relative_paths_in_text_are_clean(): void
+    {
+        $d = $this->makeDetector();
+        $this->assertNull($d->detectPayload('Relative path to ../assets/main.css or ../../src/app.js'));
     }
 
     public function test_clean_payload_passes(): void
