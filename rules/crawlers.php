@@ -33,6 +33,14 @@ return [
         'rdns_suffix' => '.googlebot.com',
     ],
     [
+        // Must stay ahead of 'Google Other' below: matching is first-substring-wins,
+        // and 'google-extended' also contains the plain 'google' substring.
+        'name'        => 'Google-Extended (Gemini/AI training)',
+        'ua_contains' => 'google-extended',
+        'verify_rdns' => true,
+        'rdns_suffix' => '.google.com',
+    ],
+    [
         'name'        => 'Google Other (APIs, AdsBot, etc.)',
         'ua_contains' => 'google',
         'verify_rdns' => true,
@@ -135,11 +143,71 @@ return [
     // ── Infrastructure / monitoring ─────────────────────────────────────────────
 
     [
+        // Must stay ahead of 'Apple' below: matching is first-substring-wins,
+        // and 'applebot-extended' also contains the plain 'applebot' substring.
+        // Apple documents this crawler as verifiable the same way as Applebot.
+        'name'        => 'Apple Intelligence (Applebot-Extended)',
+        'ua_contains' => 'applebot-extended',
+        'verify_rdns' => true,
+        'rdns_suffix' => '.applebot.apple.com',
+    ],
+    [
         'name'        => 'Apple',
         'ua_contains' => 'applebot',
         'verify_rdns' => true,
         'rdns_suffix' => '.applebot.apple.com',
     ],
+
+    // ── AI / LLM crawlers ────────────────────────────────────────────────────────
+    // These fetch pages for model training or to answer a user's live query
+    // (so your content can be cited by ChatGPT, Claude, Perplexity, etc.).
+    // None of these vendors document a reverse-DNS suffix the way Google/Bing
+    // do — they publish IP allowlists instead — so, same as the social-preview
+    // bots above, they are trusted by User-Agent only.
+
+    [
+        'name'        => 'OpenAI GPTBot',
+        'ua_contains' => 'gptbot',
+        'verify_rdns' => false,
+        'rdns_suffix' => '',
+    ],
+    [
+        'name'        => 'OpenAI ChatGPT-User',
+        'ua_contains' => 'chatgpt-user',
+        'verify_rdns' => false,
+        'rdns_suffix' => '',
+    ],
+    [
+        'name'        => 'Anthropic ClaudeBot',
+        'ua_contains' => 'claudebot',
+        'verify_rdns' => false,
+        'rdns_suffix' => '',
+    ],
+    [
+        'name'        => 'Anthropic (anthropic-ai)',
+        'ua_contains' => 'anthropic-ai',
+        'verify_rdns' => false,
+        'rdns_suffix' => '',
+    ],
+    [
+        'name'        => 'PerplexityBot',
+        'ua_contains' => 'perplexitybot',
+        'verify_rdns' => false,
+        'rdns_suffix' => '',
+    ],
+    [
+        'name'        => 'Common Crawl (CCBot)',
+        'ua_contains' => 'ccbot',
+        'verify_rdns' => false,
+        'rdns_suffix' => '',
+    ],
+    [
+        'name'        => 'Amazonbot',
+        'ua_contains' => 'amazonbot',
+        'verify_rdns' => false,
+        'rdns_suffix' => '',
+    ],
+
     [
         'name'        => 'Uptimerobot',
         'ua_contains' => 'uptimerobot',
