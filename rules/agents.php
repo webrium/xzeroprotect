@@ -50,12 +50,13 @@ return [
     'petalbot',   // aggressive crawler
     'dotbot',
 
-    // Aggressive SEO crawlers — blocked by default.
-    // Remove these if you rely on Semrush / Ahrefs data for your site:
-    //   $firewall->patterns->removeAgent('semrushbot');
-    //   $firewall->patterns->removeAgent('ahrefsbot');
-    'semrushbot',
-    'ahrefsbot',
+    // Semrush / Ahrefs are legitimate, widely-used SEO audit tools, not
+    // attack tools — they are NOT hard-blocked by default. They still pass
+    // through normal rate limiting like any other unverified bot, so a
+    // heavy site audit is throttled rather than let through unlimited.
+    // Block them yourself if you don't want their traffic:
+    //   $firewall->patterns->addAgent('semrushbot');
+    //   $firewall->patterns->addAgent('ahrefsbot');
 
     // Low-level HTTP libraries — NOT included by default because they are
     // also used by legitimate API clients and automation tools.

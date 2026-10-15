@@ -224,7 +224,9 @@ $firewall->patterns->removeAgent('curl'); // allow curl if your API clients use 
 <details>
 <summary>View default blocked agents</summary>
 
-`sqlmap` · `nikto` · `nessus` · `acunetix` · `netsparker` · `masscan` · `nmap` · `zgrab` · `dirbuster` · `gobuster` · `feroxbuster` · `wfuzz` · `ffuf` · `hydra` · `metasploit` · `semrushbot` · `ahrefsbot` · `libwww-perl` · and more
+`sqlmap` · `nikto` · `nessus` · `acunetix` · `netsparker` · `masscan` · `nmap` · `zgrab` · `dirbuster` · `gobuster` · `feroxbuster` · `wfuzz` · `ffuf` · `hydra` · `metasploit` · `libwww-perl` · and more
+
+> **Note:** Semrush and Ahrefs are legitimate SEO audit tools, not attack tools, so they are not hard-blocked by default. They are not on the trusted-crawler list either, so their traffic still passes through normal rate limiting. Block them yourself if you don't want that traffic: `$firewall->patterns->addAgent('semrushbot');`
 
 > **Note:** `curl`, `wget`, `python-requests`, and `go-http-client` are **not** blocked by default because they are also used by legitimate API clients. Add them explicitly if needed:
 > ```php
@@ -311,6 +313,8 @@ This is the verification method recommended by Google and Bing in their official
 
 Social crawlers (Twitterbot, LinkedInBot, Slackbot, etc.) are trusted by User-Agent only, as they do not publish verifiable IP ranges or rDNS suffixes.
 
+AI/LLM crawlers (GPTBot, ClaudeBot, PerplexityBot, CCBot, Amazonbot, anthropic-ai) are trusted the same way, by User-Agent only, since none of those vendors document a reverse-DNS suffix. Google-Extended and Applebot-Extended run on Google's and Apple's existing crawler infrastructure respectively, so they get the same double-DNS verification as Googlebot and Applebot.
+
 ### Verification caching
 
 Double-DNS verification costs two blocking network round-trips — measured at **~770 ms** for a real Googlebot hit, during which a PHP worker does nothing but wait. Under a heavy crawl that adds up to hours of blocked workers, and a flood of spoofed `Googlebot` User-Agents becomes a cheap way to pin every worker you have.
@@ -369,6 +373,8 @@ $firewall->disableCheck('crawler_check');
 | Yandex | `yandexbot` | ✅ `.yandex.com` |
 | Baidu | `baiduspider` | ✅ `.baidu.com` |
 | Applebot | `applebot` | ✅ `.applebot.apple.com` |
+| Applebot-Extended | `applebot-extended` | ✅ `.applebot.apple.com` |
+| Google-Extended | `google-extended` | ✅ `.google.com` |
 | Facebook | `facebookexternalhit` | ✅ `.facebook.com` |
 | Twitterbot | `twitterbot` | — |
 | LinkedInBot | `linkedinbot` | — |
@@ -376,6 +382,13 @@ $firewall->disableCheck('crawler_check');
 | Telegram | `telegrambot` | — |
 | Slackbot | `slackbot` | — |
 | Discordbot | `discordbot` | — |
+| GPTBot (OpenAI) | `gptbot` | — |
+| ChatGPT-User (OpenAI) | `chatgpt-user` | — |
+| ClaudeBot (Anthropic) | `claudebot` | — |
+| anthropic-ai | `anthropic-ai` | — |
+| PerplexityBot | `perplexitybot` | — |
+| CCBot (Common Crawl) | `ccbot` | — |
+| Amazonbot | `amazonbot` | — |
 | Uptimerobot | `uptimerobot` | — |
 | Pingdom | `pingdom` | — |
 
