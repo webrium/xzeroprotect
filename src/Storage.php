@@ -335,7 +335,7 @@ class Storage
             'type='   . ($entry['type']    ?? ''),
             'uri='    . ($entry['uri']      ?? ''),
             'reason=' . ($entry['reason']  ?? ''),
-            'ua='     . substr($entry['ua'] ?? '', 0, 80),
+            'ua='     . substr($entry['ua'] ?? '', 0, 500),
         ]) . PHP_EOL;
 
         file_put_contents($file, $line, FILE_APPEND | LOCK_EX);
