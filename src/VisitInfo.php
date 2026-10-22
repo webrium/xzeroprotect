@@ -24,8 +24,15 @@ class VisitInfo
     public readonly int         $timestamp;
     public readonly string      $fingerprint;   // unique visitor identifier
     public readonly DeviceInfo  $device;        // browser / OS / device type
+    public readonly bool        $isBot;         // a bot that is not an attacker
+    public readonly ?string     $botName;       // 'Pulsetic', 'GPTBot', ... or null
 
-    public function __construct(Request $request)
+    /**
+     * @param string|null $botName Label of the bot behind this visit, or null
+     *        for a person. The firewall works it out (see BotDetector); a
+     *        VisitInfo built by hand is a person unless told otherwise.
+     */
+    public function __construct(Request $request, ?string $botName = null)
     {
         $this->ip          = $request->ip;
         $this->uri         = $request->uri;
@@ -35,6 +42,8 @@ class VisitInfo
         $this->referer     = $request->referer;
         $this->timestamp   = time();
         $this->device      = new DeviceInfo($request->userAgent);
+        $this->botName     = $botName;
+        $this->isBot       = $botName !== null;
         $this->fingerprint = $this->buildFingerprint($request);
     }
 
@@ -78,6 +87,9 @@ class VisitInfo
             'is_mobile'   => $this->device->isMobile,
             'is_tablet'   => $this->device->isTablet,
             'is_desktop'  => $this->device->isDesktop,
+            // bot
+            'is_bot'      => $this->isBot,
+            'bot_name'    => $this->botName,
         ];
     }
 
