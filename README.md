@@ -313,7 +313,7 @@ This is the verification method recommended by Google and Bing in their official
 
 Social crawlers (Twitterbot, LinkedInBot, Slackbot, etc.) are trusted by User-Agent only, as they do not publish verifiable IP ranges or rDNS suffixes.
 
-AI/LLM crawlers (GPTBot, ClaudeBot, PerplexityBot, CCBot, Amazonbot, anthropic-ai) are trusted the same way, by User-Agent only, since none of those vendors document a reverse-DNS suffix. Google-Extended and Applebot-Extended run on Google's and Apple's existing crawler infrastructure respectively, so they get the same double-DNS verification as Googlebot and Applebot.
+AI/LLM crawlers and assistants (GPTBot, ChatGPT-User, OAI-SearchBot, ClaudeBot, Claude-User, Claude-SearchBot, PerplexityBot, Perplexity-User, CCBot, Amazonbot, anthropic-ai) are trusted the same way, by User-Agent only, since none of those vendors document a reverse-DNS suffix. The ones that fetch a page for a person asking a question (ChatGPT-User, Claude-User, Perplexity-User, Google's Gemini fetchers) are in the list on purpose: rate-limiting them costs your site a citation. Google-Extended and Applebot-Extended run on Google's and Apple's existing crawler infrastructure respectively, so they get the same double-DNS verification as Googlebot and Applebot.
 
 ### Verification caching
 
@@ -384,7 +384,15 @@ $firewall->disableCheck('crawler_check');
 | Discordbot | `discordbot` | — |
 | GPTBot (OpenAI) | `gptbot` | — |
 | ChatGPT-User (OpenAI) | `chatgpt-user` | — |
+| OAI-SearchBot (OpenAI) | `oai-searchbot` | — |
+| OAI-AdsBot (OpenAI) | `oai-adsbot` | — |
 | ClaudeBot (Anthropic) | `claudebot` | — |
+| Claude-User (Anthropic) | `claude-user` | — |
+| Claude-SearchBot (Anthropic) | `claude-searchbot` | — |
+| Perplexity-User | `perplexity-user` | — |
+| Google Gemini Notebook | `google-gemininotebook` | — |
+| Google Notebook (old NotebookLM token) | `google-notebooklm` | — |
+| Google-Agent | `google-agent` | — |
 | anthropic-ai | `anthropic-ai` | — |
 | PerplexityBot | `perplexitybot` | — |
 | CCBot (Common Crawl) | `ccbot` | — |
@@ -902,7 +910,8 @@ xzeroprotect/
     ├── VisitFilterTest.php      Visit-filtering test suite
     ├── CrawlerCacheTest.php     Crawler DNS-cache test suite
     ├── DeferredTrackingTest.php Response-status tracking test suite
-    └── BotDetectionTest.php     Bot detection and include_bots test suite
+    ├── BotDetectionTest.php     Bot detection and include_bots test suite
+    └── AiCrawlerTest.php        AI assistant crawler recognition test suite
 ```
 
 ---
