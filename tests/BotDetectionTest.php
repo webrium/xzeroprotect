@@ -208,6 +208,52 @@ class BotDetectionTest extends TestCase
     }
 
     // =========================================================================
+    // Cost
+    // =========================================================================
+
+    /**
+     * @dataProvider hostileUserAgents
+     */
+    public function test_a_long_hostile_user_agent_is_cheap(string $userAgent): void
+    {
+        // Quadratic backtracking made this take over a second per request with
+        // PCRE's JIT off. Linear matching plus the length cap keep it near zero.
+        $detector = $this->detector();
+
+        $start = microtime(true);
+        $detector->detect($userAgent);
+
+        $this->assertLessThan(0.25, microtime(true) - $start);
+    }
+
+    public static function hostileUserAgents(): array
+    {
+        return [
+            'one long word'   => ['Mozilla/5.0 ' . str_repeat('A', 8000)],
+            'almost bot'      => ['Mozilla/5.0 ' . str_repeat('bo', 4000)],
+            'almost spider'   => ['Mozilla/5.0 ' . str_repeat('spide', 1600)],
+            'dotted'          => ['Mozilla/5.0 ' . str_repeat('a.', 4000)],
+        ];
+    }
+
+    public function test_only_the_start_of_the_user_agent_is_inspected(): void
+    {
+        $detector = $this->detector();
+
+        $this->assertSame('GPTBot', $detector->detect('Mozilla/5.0 GPTBot/1.1'));
+        $this->assertNull($detector->detect('Mozilla/5.0 ' . str_repeat(' ', 600) . 'GPTBot/1.1'));
+    }
+
+    public function test_rules_are_not_loaded_until_used(): void
+    {
+        // Pointing at a directory with no rules would throw on load, so this
+        // proves construction alone does no work.
+        $detector = new BotDetector($this->tmpDir . '/missing');
+
+        $this->assertInstanceOf(BotDetector::class, $detector);
+    }
+
+    // =========================================================================
     // VisitInfo
     // =========================================================================
 
