@@ -192,6 +192,14 @@ return [
     | ignore_prefetch    : skip speculative prefetch / prerender loads
     | ignore_extensions  : added to the defaults in rules/ignore_tracking.php
     | ignore_paths       : added to the defaults; matched as a path prefix
+    | include_bots       : false keeps non-human visitors out of the tracker —
+    |                      uptime monitors, HTTP clients, link fetchers, and
+    |                      verified crawlers (Googlebot, GPTBot, ...). true
+    |                      passes them on with VisitInfo::$isBot / $botName set.
+    |                      Attackers are never tracked either way.
+    | bot_agents         : User-Agent substrings to treat as bots, added to the
+    |                      defaults in rules/bots.php. ['mybot'] or
+    |                      ['mybot' => 'My Bot'] to also set the label.
     |
     | Sec-Fetch-Dest can only reject a request, never wave one through: a page
     | navigation to a path you ignored on purpose stays ignored.
@@ -207,6 +215,8 @@ return [
         'ignore_prefetch'    => true,
         'ignore_extensions'  => [],
         'ignore_paths'       => [],
+        'include_bots'       => false,
+        'bot_agents'         => [],
     ],
 
     /*

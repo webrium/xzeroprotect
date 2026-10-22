@@ -591,7 +591,7 @@ XZeroProtect::init(['mode' => 'production'])->run();
 
 ## Visitor Tracking
 
-After all firewall checks pass, xZeroProtect can record verified real visits — bots, scanners, and suspicious requests are already filtered out before this runs.
+After all firewall checks pass, xZeroProtect can record verified real visits — scanners and suspicious requests are already blocked before this runs, and bots that are not attackers (uptime monitors, HTTP clients, crawlers) are kept out unless you ask for them. See [Bot Detection](#bot-detection).
 
 Tracking is **opt-in** and **disabled by default**. Enable it by passing a closure to `enableTracking()` before calling `run()`. The closure receives a `VisitInfo` object; how you store the data is entirely up to you.
 
@@ -644,6 +644,8 @@ $firewall->run();
 | `$visit->timestamp` | `int` | Unix timestamp |
 | `$visit->fingerprint` | `string` | SHA-256 unique visitor identifier (see below) |
 | `$visit->device` | `DeviceInfo` | Parsed browser, OS, and device type |
+| `$visit->isBot` | `bool` | `true` for a bot that is not an attacker — see [Bot Detection](#bot-detection) |
+| `$visit->botName` | `?string` | `'Pulsetic'`, `'OpenAI GPTBot'`, `'curl'`, … — `null` for a person |
 | `$visit->date()` | `string` | Formatted timestamp — default `Y-m-d H:i:s` |
 | `$visit->toArray()` | `array` | All fields as a flat array, ready for DB insert |
 
@@ -691,6 +693,70 @@ $firewall->isTrackingEnabled(); // bool
 
 ---
 
+## Bot Detection
+
+Passing the firewall means a request is not an attack — it does not mean a person sent it. Uptime monitors, HTTP clients, link-preview fetchers, and search and AI crawlers are harmless, but counting them as visitors fills your statistics with a service pinging you every minute.
+
+xZeroProtect therefore sorts traffic into three groups:
+
+| Group | What happens |
+|-------|--------------|
+| **Attackers** | Blocked and logged. Never tracked. |
+| **Bots** — monitors, HTTP clients, crawlers, AI agents | Kept out of the tracker by default. Passed on with `isBot = true` when `include_bots` is on. |
+| **People** | Passed to the tracker. |
+
+```php
+$firewall = XZeroProtect::init([
+    'tracking' => [
+        'include_bots' => true,   // default false
+    ],
+]);
+
+$firewall->enableTracking(function (VisitInfo $visit) {
+    if ($visit->isBot) {
+        // $visit->botName: 'Pulsetic', 'OpenAI GPTBot', 'curl', ...
+        return;
+    }
+
+    // count a real visitor
+});
+```
+
+`$visit->toArray()` carries `is_bot` and `bot_name`, so an insert built from it picks them up.
+
+**What `include_bots` changes.** Off (default), only people reach your callback. On, a verified crawler (Googlebot, GPTBot, …) that used to leave the firewall without a trace is passed on as well, named by the [trusted crawler](#crawler-detection) list. It stays exempt from every firewall check either way — `include_bots` only decides whether your tracker hears about it. The visit filter still applies: a crawler fetching `/style.css` is not a page view.
+
+### How a bot is recognised
+
+One pass over the `User-Agent`, cheapest check first, no DNS and no disk:
+
+1. Verified crawlers are named from the [crawler list](#crawler-detection), which has already confirmed them.
+2. An empty User-Agent.
+3. A name in `rules/bots.php` — monitors (Pulsetic, UptimeRobot, Pingdom, …), HTTP clients (`curl`, `python-requests`, `Go-http-client`, …), headless browsers, AI agents, link-preview fetchers.
+4. A name ending in `bot`, `spider`, `crawler`, or `slurp` — `AhrefsBot`, `MJ12bot`, `Bytespider` — which is used as the label.
+5. A URL inside the User-Agent (`+https://example.com/bot`). Browsers never send one.
+6. A User-Agent that does not start with `Mozilla/` or `Opera/`. Every mainstream browser does.
+
+It costs a couple of microseconds per visit and runs only for requests that reach the tracker.
+
+**Accuracy comes first, again.** A person mislabelled as a bot vanishes from your numbers; a bot mislabelled as a person only nudges them. So every rule matches something a real browser never sends — the `bot` pattern, for one, excludes the Cubot phone brand — and the detector says nothing when in doubt. An unrecognised bot with an ordinary browser User-Agent counts as a person: User-Agent alone cannot tell them apart, and trying harder would cost real visitors.
+
+```php
+$firewall->bots->addAgent('acme-monitor', 'Acme Monitor');   // label is optional
+$firewall->bots->removeAgent('java/');
+$firewall->bots->addPattern('/(\w+checker)/i');             // group 1 becomes the label
+$firewall->bots->treatNonBrowserAsBot(false);                // rule 6 off
+
+// Or in config — added to the defaults:
+XZeroProtect::init(['tracking' => ['bot_agents' => ['acme-monitor' => 'Acme Monitor']]]);
+
+$firewall->bots->detect($userAgent);   // 'Pulsetic' | null
+```
+
+`filter => false` keeps its meaning of "record everything": bots are then recorded and flagged regardless of `include_bots`, except verified crawlers, which have never reached the tracker unless `include_bots` is on.
+
+---
+
 ## Visit Filtering
 
 Passing the firewall makes a request *legitimate* — it does not make it a *page view*. A missing font still reaches PHP (your rewrite rules send anything not on disk to `index.php`), a favicon probe is a sub-resource, and a form `POST` is not a new visit. Recorded as-is, all three inflate your statistics.
@@ -712,6 +778,8 @@ $firewall = XZeroProtect::init([
         'ignore_prefetch'    => true,
         'ignore_extensions'  => [],          // added to the defaults
         'ignore_paths'       => [],          // added to the defaults
+        'include_bots'       => false,       // see Bot Detection
+        'bot_agents'         => [],          // added to the defaults
     ],
 ]);
 ```
@@ -815,6 +883,7 @@ xzeroprotect/
 │   ├── RuleEngine.php        Custom rule registration & execution
 │   ├── ApacheBlocker.php     .htaccess read/write
 │   ├── CrawlerVerifier.php   Trusted crawler detection with cached double-DNS
+│   ├── BotDetector.php       Labels non-human visitors for the tracker
 │   ├── Logger.php            Attack logging with rotation
 │   ├── VisitInfo.php         Verified visit data object (tracking)
 │   ├── VisitFilter.php       Decides which requests count as a page visit
@@ -826,12 +895,14 @@ xzeroprotect/
 │   ├── agents.php            Default blocked User-Agent signatures
 │   ├── payloads.php          Default attack payload patterns (PCRE)
 │   ├── crawlers.php          Trusted crawler definitions (UA + rDNS config)
+│   ├── bots.php              Monitors, HTTP clients and other non-human User-Agents
 │   └── ignore_tracking.php   Requests never counted as a page visit
 └── tests/
     ├── XZeroProtectTest.php     PHPUnit test suite
     ├── VisitFilterTest.php      Visit-filtering test suite
     ├── CrawlerCacheTest.php     Crawler DNS-cache test suite
-    └── DeferredTrackingTest.php Response-status tracking test suite
+    ├── DeferredTrackingTest.php Response-status tracking test suite
+    └── BotDetectionTest.php     Bot detection and include_bots test suite
 ```
 
 ---

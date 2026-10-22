@@ -28,6 +28,7 @@ class XZeroProtect
     public ?ApacheBlocker  $apache = null;
     public CrawlerVerifier $crawlers;
     public VisitFilter     $visits;
+    public BotDetector     $bots;
 
     private array   $config;
     private Storage $storage;
@@ -43,6 +44,7 @@ class XZeroProtect
     private ?\Closure $visitorCallback  = null;
     private string    $trackingWhen     = self::TRACK_IMMEDIATE;
     private array     $trackedStatuses  = [];
+    private bool      $includeBots      = false;
 
     // -------------------------------------------------------------------------
     // Factory / constructor
@@ -68,6 +70,7 @@ class XZeroProtect
         }
         $this->crawlers    = new CrawlerVerifier($rulesDir, $this->storage, $config['crawler_cache'] ?? []);
         $this->visits      = new VisitFilter($rulesDir, $config['tracking'] ?? []);
+        $this->bots        = new BotDetector($rulesDir, (array) ($config['tracking']['bot_agents'] ?? []));
         $this->ip          = new IPManager($this->storage);
         $this->rateLimit   = new RateLimiter(
             $this->storage,
@@ -86,6 +89,7 @@ class XZeroProtect
         // Visitor tracking
         $this->setTrackingWhen((string) ($config['tracking']['when'] ?? self::TRACK_IMMEDIATE));
         $this->setTrackedStatuses((array) ($config['tracking']['only_status'] ?? [200]));
+        $this->includeBots((bool) ($config['tracking']['include_bots'] ?? false));
 
         // Whitelisted IPs
         foreach ($config['whitelist']['ips'] ?? [] as $cidr) {
@@ -165,7 +169,13 @@ class XZeroProtect
         // 1. Trusted crawler check — bypass all firewall checks
         if ($this->checkEnabled('crawler_check')) {
             if ($this->crawlers->isTrustedCrawler($request->ip, $request->userAgent)) {
-                return; // verified legitimate crawler — let it through
+                // Verified crawler: exempt from every check below. It is not a
+                // person, so the tracker hears about it only when asked to.
+                if ($this->includeBots) {
+                    $this->recordVisit($request, $this->crawlers->getCrawlerName($request->userAgent));
+                }
+
+                return;
             }
         }
 
@@ -337,6 +347,26 @@ class XZeroProtect
         return $this->trackedStatuses;
     }
 
+    /**
+     * Whether bots that are not attackers reach the tracking callback.
+     *
+     * Off (default): only people are tracked. Uptime monitors, HTTP clients and
+     * the like are dropped, and verified crawlers never reach the tracker.
+     * On: every one of them is passed on, with VisitInfo::$isBot set and the
+     * bot's name in VisitInfo::$botName so the callback can tell them apart.
+     *
+     * Attackers are never tracked either way — they are blocked and logged.
+     */
+    public function includeBots(bool $include = true): void
+    {
+        $this->includeBots = $include;
+    }
+
+    public function isIncludingBots(): bool
+    {
+        return $this->includeBots;
+    }
+
     // -------------------------------------------------------------------------
     // Private helpers
     // -------------------------------------------------------------------------
@@ -411,8 +441,12 @@ class XZeroProtect
     /**
      * Fire the visitor-tracking callback (if enabled) for a verified real visit.
      * Errors inside the callback are caught so they never break the main request.
+     *
+     * @param string|null $crawler Name of the verified crawler, when the caller
+     *        already knows the visitor is one. Otherwise the User-Agent is
+     *        inspected.
      */
-    private function recordVisit(Request $request): void
+    private function recordVisit(Request $request, ?string $crawler = null): void
     {
         if (!$this->trackingEnabled || $this->visitorCallback === null) {
             return;
@@ -423,9 +457,18 @@ class XZeroProtect
             return;
         }
 
+        $bot = $crawler ?? $this->bots->detect($request->userAgent);
+
+        // A bot that is not an attacker is still not a visitor. It is kept out
+        // unless include_bots asks for it — or the filter is off, which means
+        // "record everything".
+        if ($bot !== null && !$this->includeBots && $this->visits->isEnabled()) {
+            return;
+        }
+
         // Built now, dispatched possibly later, so the recorded timestamp is
         // when the visitor arrived rather than when the response finished.
-        $visit = new VisitInfo($request);
+        $visit = new VisitInfo($request, $bot);
 
         if ($this->trackingWhen === self::TRACK_SHUTDOWN) {
             $this->deferToShutdown(function () use ($visit) {
