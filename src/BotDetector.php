@@ -22,6 +22,12 @@ namespace Webrium\XZeroProtect;
  */
 class BotDetector
 {
+    /**
+     * Only this much of the User-Agent is looked at. Real bot names sit at the
+     * start; the rest of an 8 KB header is somebody trying to make the regex work.
+     */
+    private const MAX_UA_LENGTH = 512;
+
     /** @var array<string,string> Lowercase needle => label */
     private array $agents = [];
 
@@ -30,24 +36,37 @@ class BotDetector
 
     private bool $nonBrowserIsBot = true;
 
+    private bool $loaded = false;
+
     /**
+     * Nothing is read until the first use: the firewall builds this on every
+     * request, and most requests never reach the tracker.
+     *
      * @param array<int|string,string> $extraAgents Added to the defaults. A
      *        list entry ('mybot') is its own label; a map entry ('mybot' => 'My Bot')
      *        sets one.
      */
-    public function __construct(string $rulesDir, array $extraAgents = [])
+    public function __construct(private string $rulesDir, private array $extraAgents = [])
     {
-        $rules = require $rulesDir . '/bots.php';
+    }
 
-        foreach ($rules['agents'] ?? [] as $needle => $label) {
-            $this->addAgent((string) $needle, (string) $label);
+    private function load(): void
+    {
+        if ($this->loaded) {
+            return;
         }
+
+        $this->loaded = true;
+
+        $rules = require $this->rulesDir . '/bots.php';
+
+        $this->agents = array_change_key_case((array) ($rules['agents'] ?? []), CASE_LOWER);
 
         if (!empty($rules['pattern'])) {
-            $this->addPattern((string) $rules['pattern'], 'bot');
+            $this->patterns[(string) $rules['pattern']] = 'bot';
         }
 
-        foreach ($extraAgents as $needle => $label) {
+        foreach ($this->extraAgents as $needle => $label) {
             is_int($needle)
                 ? $this->addAgent((string) $label)
                 : $this->addAgent((string) $needle, (string) $label);
@@ -64,7 +83,9 @@ class BotDetector
      */
     public function detect(string $userAgent): ?string
     {
-        $userAgent = trim($userAgent);
+        $this->load();
+
+        $userAgent = substr(trim($userAgent), 0, self::MAX_UA_LENGTH);
 
         if ($userAgent === '') {
             return 'Empty User-Agent';
@@ -118,6 +139,8 @@ class BotDetector
      */
     public function addAgent(string $needle, ?string $label = null): self
     {
+        $this->load();
+
         $needle = strtolower(trim($needle));
 
         if ($needle !== '') {
@@ -129,6 +152,8 @@ class BotDetector
 
     public function removeAgent(string $needle): self
     {
+        $this->load();
+
         unset($this->agents[strtolower(trim($needle))]);
 
         return $this;
@@ -140,6 +165,8 @@ class BotDetector
      */
     public function addPattern(string $regex, string $label = 'bot'): self
     {
+        $this->load();
+
         if ($regex !== '') {
             $this->patterns[$regex] = $label;
         }
@@ -149,6 +176,8 @@ class BotDetector
 
     public function removePattern(string $regex): self
     {
+        $this->load();
+
         unset($this->patterns[$regex]);
 
         return $this;
@@ -169,6 +198,8 @@ class BotDetector
     /** @return array<string,string> */
     public function getAgents(): array
     {
+        $this->load();
+
         return $this->agents;
     }
 }
