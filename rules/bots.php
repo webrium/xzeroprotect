@@ -110,8 +110,13 @@ return [
     // Names ending in "bot" ("Googlebot", "AhrefsBot", "GPTBot"), plus
     // "spider", "crawler" and "slurp". Group 1 is the bot's own name.
     //
+    // (?<![a-z0-9._-]) starts the match only at the beginning of a word, so the
+    // greedy [a-z0-9._-]* is tried once per word instead of once per character.
+    // Without it a long run of letters in a hostile User-Agent backtracks
+    // quadratically — over a second for 8 KB when PCRE's JIT is off.
+    //
     // (?<!cu) keeps the Cubot phone brand ("CUBOT NOTE 7") out of it. Other
     // brands that end in "bot" can be excluded the same way, or a wrong
     // match removed with $firewall->bots->removePattern().
-    'pattern' => '/([a-z0-9._-]*(?:(?<!cu)bot|spider|crawler|slurp))\b/i',
+    'pattern' => '/(?<![a-z0-9._-])([a-z0-9._-]*(?:(?<!cu)bot|spider|crawler|slurp))\b/i',
 ];
