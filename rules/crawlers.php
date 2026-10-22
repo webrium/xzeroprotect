@@ -41,6 +41,29 @@ return [
         'rdns_suffix' => '.google.com',
     ],
     [
+        // Fetch a page a user pointed Gemini at. Must stay ahead of 'Google Other'
+        // for the same reason as above. Google documents its user-triggered fetchers as
+        // resolving to *.gae.googleusercontent.com or google-proxy-*.google.com,
+        // so the single .google.com suffix of 'Google Other' would turn half of
+        // them away; they are trusted by User-Agent instead.
+        'name'        => 'Google Gemini Notebook',
+        'ua_contains' => 'google-gemininotebook',
+        'verify_rdns' => false,
+        'rdns_suffix' => '',
+    ],
+    [
+        'name'        => 'Google Notebook (former NotebookLM token)',
+        'ua_contains' => 'google-notebooklm',
+        'verify_rdns' => false,
+        'rdns_suffix' => '',
+    ],
+    [
+        'name'        => 'Google-Agent',
+        'ua_contains' => 'google-agent',
+        'verify_rdns' => false,
+        'rdns_suffix' => '',
+    ],
+    [
         'name'        => 'Google Other (APIs, AdsBot, etc.)',
         'ua_contains' => 'google',
         'verify_rdns' => true,
@@ -184,6 +207,30 @@ return [
         'rdns_suffix' => '',
     ],
     [
+        'name'        => 'OpenAI OAI-SearchBot',
+        'ua_contains' => 'oai-searchbot',
+        'verify_rdns' => false,
+        'rdns_suffix' => '',
+    ],
+    [
+        'name'        => 'OpenAI OAI-AdsBot',
+        'ua_contains' => 'oai-adsbot',
+        'verify_rdns' => false,
+        'rdns_suffix' => '',
+    ],
+    [
+        'name'        => 'Anthropic Claude-User',
+        'ua_contains' => 'claude-user',
+        'verify_rdns' => false,
+        'rdns_suffix' => '',
+    ],
+    [
+        'name'        => 'Anthropic Claude-SearchBot',
+        'ua_contains' => 'claude-searchbot',
+        'verify_rdns' => false,
+        'rdns_suffix' => '',
+    ],
+    [
         'name'        => 'Anthropic (anthropic-ai)',
         'ua_contains' => 'anthropic-ai',
         'verify_rdns' => false,
@@ -192,6 +239,12 @@ return [
     [
         'name'        => 'PerplexityBot',
         'ua_contains' => 'perplexitybot',
+        'verify_rdns' => false,
+        'rdns_suffix' => '',
+    ],
+    [
+        'name'        => 'Perplexity-User',
+        'ua_contains' => 'perplexity-user',
         'verify_rdns' => false,
         'rdns_suffix' => '',
     ],
